@@ -1,0 +1,10 @@
+{
+  "name": "Tierra Fleur Designs Command Center",
+  "short_name": "Tierra Fleur",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f8f2ea",
+  "theme_color": "#52684f",
+  "description": "A business command center for Tierra Fleur Designs.",
+  "icons": []
+}
