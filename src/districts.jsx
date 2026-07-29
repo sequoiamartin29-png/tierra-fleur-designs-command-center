@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import './districts.css';
 
 export const PERSONAL_CATEGORIES = [
@@ -211,7 +211,7 @@ function EmptyDistrict({ title, text }) {
   return <div className="district-empty"><span aria-hidden="true">❦</span><strong>{title}</strong><p>{text}</p></div>;
 }
 
-export function UniversalSearch({ open, onClose, data, navigate, openProject }) {
+export function UniversalSearch({ open, onClose, data, navigate, openProject, openDesign }) {
   const [query, setQuery] = useState('');
   useEffect(() => { if (!open) setQuery(''); }, [open]);
   const groups = useMemo(() => {
@@ -257,14 +257,50 @@ export function UniversalSearch({ open, onClose, data, navigate, openProject }) 
       detail: `${transaction.transactionId || 'Record'} • ${money(transaction.amount)}`,
       action: () => navigate('finance'),
     }));
+    const designRecords = [
+      ...data.designConcepts.filter(item => match(item.name, item.status, item.notes?.general, item.notes?.clientRequests, item.notes?.maintenance, item.notes?.futureIdeas)).map(item => ({
+        id: item.designId,
+        projectId: item.projectId,
+        title: item.name,
+        detail: `${item.status} • Design concept`,
+      })),
+      ...data.designPlants.filter(item => match(item.commonName, item.scientificName, item.category, item.light, item.traits, item.notes)).map(item => ({
+        id: item.plantId,
+        projectId: data.sourcingRecords.find(record => record.sourcingRecordId === item.sourcingRecordId)?.projectId || '',
+        title: item.commonName,
+        detail: `${item.scientificName || item.category} • Approved plant`,
+      })),
+      ...data.designInspirations.filter(item => match(item.title, item.type, item.details, item.colors, item.styleKeyword)).map(item => ({
+        id: item.inspirationId,
+        projectId: item.projectId,
+        title: item.title,
+        detail: `${item.type} • ${item.styleKeyword}`,
+      })),
+      ...data.designMeasurements.filter(item => match(item.label, item.length, item.width, item.unit, item.areaNotes)).map(item => ({
+        id: item.measurementId,
+        projectId: item.projectId,
+        title: item.label,
+        detail: `${item.length}${item.width ? ` × ${item.width}` : ''} ${item.unit} • Measurement`,
+      })),
+      ...data.projectPhotos.filter(item => match(item.caption, item.fileName, item.stage, item.tags)).map(item => ({
+        id: item.photoId || item.id,
+        projectId: item.projectId,
+        title: item.caption || item.fileName,
+        detail: `${item.stage} • Site photo`,
+      })),
+    ].slice(0, 8).map(item => ({
+      ...item,
+      action: () => item.projectId ? openDesign(item.projectId) : navigate('design'),
+    }));
     return [
       ['Client District', clients],
       ['Project District', projects],
+      ['Design District', designRecords],
       ['Plant Sourcing District', nurseries],
       ['Finance District', transactions],
       ['Finance District · Estimates & Invoices', documents],
     ].filter(([, items]) => items.length);
-  }, [query, data, navigate, openProject]);
+  }, [query, data, navigate, openProject, openDesign]);
   if (!open) return null;
   return <div className="universal-search-backdrop" role="presentation" onMouseDown={event => event.target === event.currentTarget && onClose()}>
     <section className="universal-search glass" role="dialog" aria-modal="true" aria-label="Search all districts">
@@ -272,7 +308,7 @@ export function UniversalSearch({ open, onClose, data, navigate, openProject }) 
         <div><span>Estate-wide finder</span><h2>Search every District</h2></div>
         <button onClick={onClose} aria-label="Close search">×</button>
       </div>
-      <input autoFocus type="search" value={query} onChange={event => setQuery(event.target.value)} placeholder="Client, project ID, nursery, plant, invoice, receipt, or notes…" />
+      <input autoFocus type="search" value={query} onChange={event => setQuery(event.target.value)} placeholder="Client, project, concept, plant, photo, invoice, receipt, or notes…" />
       {!query && <p className="universal-search-hint">Search is grouped by District and never sends your private records anywhere.</p>}
       {query && !groups.length && <EmptyDistrict title="No records found" text="Try a name, address, project ID, plant, receipt, or note." />}
       <div className="universal-results">{groups.map(([district, items]) => <section key={district}>
@@ -366,9 +402,13 @@ function calculateProjectFinance(data, project) {
   return { transactions, plantCosts, materialCosts, nurseryShipping, mileageCost, laborCost, deliveryCost, otherExpenses, totalCost, clientRevenue, outstandingBalance, netProfit, profitMargin, recommendedPrice };
 }
 
-export function ProjectDistrict({ data, setData, initialProjectId, openDesign }) {
+export function ProjectDistrict({ data, setData, initialProjectId, openDesign, openClients }) {
   const blankProject = { name: '', clientId: '', propertyAddress: '', status: 'Lead', startDate: '', targetCompletionDate: '', budget: '', notes: '' };
   const [form, setForm] = useState(blankProject);
+  const [projectErrors, setProjectErrors] = useState({});
+  const [projectNotice, setProjectNotice] = useState('');
+  const [submittingProject, setSubmittingProject] = useState(false);
+  const projectSubmissionRef = useRef(false);
   const [selectedId, setSelectedId] = useState(initialProjectId || '');
   const [tab, setTab] = useState('Overview');
   const [sourceForm, setSourceForm] = useState({ nurseryId: '', plant: '', quantity: '', estimatedCost: '', status: 'Considering', notes: '' });
@@ -378,15 +418,31 @@ export function ProjectDistrict({ data, setData, initialProjectId, openDesign })
   const [timeline, setTimeline] = useState({ date: today(), title: '', detail: '' });
   useEffect(() => { if (initialProjectId) { setSelectedId(initialProjectId); setTab('Overview'); } }, [initialProjectId]);
   const activeProjects = data.projects.filter(project => !project.archived);
+  const activeClients = data.clients.filter(item => !item.archived);
+  const clientRecordId = item => item?.id || item?.clientId || '';
   const selected = data.projects.find(project => project.projectId === selectedId);
-  const client = selected ? data.clients.find(item => item.clientId === selected.clientId) : null;
+  const client = selected ? data.clients.find(item => clientRecordId(item) === selected.clientId) : null;
   const patchProject = changes => setData(current => ({ ...current, projects: current.projects.map(project => project.projectId === selectedId ? { ...project, ...changes } : project) }));
   const addProject = event => {
     event.preventDefault();
-    if (!form.name.trim() || !form.clientId) return;
+    if (projectSubmissionRef.current) return;
+    const errors = {};
+    const selectedClient = activeClients.find(item => clientRecordId(item) === form.clientId);
+    if (!form.clientId || !selectedClient) errors.clientId = 'Choose an active client from the list.';
+    if (!form.name.trim()) errors.name = 'Enter a project name.';
+    if (!form.propertyAddress.trim()) errors.propertyAddress = 'Enter the property address.';
+    if (!form.status) errors.status = 'Choose a project status.';
+    setProjectErrors(errors);
+    setProjectNotice('');
+    if (Object.keys(errors).length) return;
+    projectSubmissionRef.current = true;
+    setSubmittingProject(true);
     const projectId = createProjectCode(data.projects, form.startDate || today());
     const project = {
       ...form,
+      name: form.name.trim(),
+      propertyAddress: form.propertyAddress.trim(),
+      clientId: clientRecordId(selectedClient),
       id: uid('project'),
       projectId,
       createdAt: new Date().toISOString(),
@@ -397,6 +453,11 @@ export function ProjectDistrict({ data, setData, initialProjectId, openDesign })
     setForm(blankProject);
     setSelectedId(projectId);
     setTab('Overview');
+    setProjectNotice(`${projectId} was created and linked to ${selectedClient.name}.`);
+    setTimeout(() => {
+      projectSubmissionRef.current = false;
+      setSubmittingProject(false);
+    }, 500);
   };
   const archiveProject = project => {
     if (confirm(`Archive ${project.projectId} · ${project.name}?`)) {
@@ -447,6 +508,7 @@ export function ProjectDistrict({ data, setData, initialProjectId, openDesign })
     const documents = data.estimates.filter(item => item.projectId === selectedId && !item.archived);
     const legacyExpenses = data.expenses.filter(item => item.projectId === selectedId && !item.archived);
     return <div className="page project-hub-page">
+      {projectNotice && <div className="project-success-message" role="status"><span aria-hidden="true">✓</span>{projectNotice}</div>}
       <div className="project-hub-title">
         <button onClick={() => setSelectedId('')}>← Project District</button>
         <div><span>{selected.projectId}</span><h2>{selected.name}</h2><p>{client?.name || 'Unassigned client'} • {selected.propertyAddress || 'No property address'}</p></div>
@@ -458,7 +520,7 @@ export function ProjectDistrict({ data, setData, initialProjectId, openDesign })
         <div className="district-panel-title"><div><span className="district-eyebrow">Project Hub</span><h3>Overview</h3></div><strong>{selected.projectId}</strong></div>
         <div className="project-overview-grid">
           <label>Project name<input value={selected.name} onChange={event => patchProject({ name: event.target.value })} /></label>
-          <label>Primary client<select required value={selected.clientId} onChange={event => patchProject({ clientId: event.target.value })}><option value="" disabled>Assign primary client *</option>{data.clients.filter(item => !item.archived).map(item => <option key={item.clientId} value={item.clientId}>{item.name}</option>)}</select></label>
+          <label>Primary client<select required value={selected.clientId} onChange={event => patchProject({ clientId: event.target.value })}><option value="" disabled>Assign primary client *</option>{activeClients.map(item => <option key={clientRecordId(item)} value={clientRecordId(item)}>{item.name}</option>)}</select></label>
           <label className="wide">Property address<input value={selected.propertyAddress} onChange={event => patchProject({ propertyAddress: event.target.value })} /></label>
           <label>Status<select value={selected.status} onChange={event => patchProject({ status: event.target.value })}>{PROJECT_STATUSES.map(item => <option key={item}>{item}</option>)}</select></label>
           <label>Budget<input type="number" min="0" step="0.01" value={selected.budget} onChange={event => patchProject({ budget: event.target.value })} /></label>
@@ -474,7 +536,7 @@ export function ProjectDistrict({ data, setData, initialProjectId, openDesign })
         {client ? <div className="client-profile-card"><h4>{client.name}</h4><p>{client.address || selected.propertyAddress || 'No address saved'}</p><div>{client.phone && <a href={`tel:${client.phone}`}>{client.phone}</a>}{client.email && <a href={`mailto:${client.email}`}>{client.email}</a>}</div>{client.notes && <p>{client.notes}</p>}</div> : <EmptyDistrict title="No client assigned" text="Choose a primary client in Overview. Project records reference the client ID instead of copying client details." />}
       </section>}
 
-      {tab === 'Design' && <section className="design-district-card glass"><span aria-hidden="true">✎</span><div><span className="district-eyebrow">Design District connection</span><h3>Property Sketch</h3><p>Open the existing Apple Pencil and photo sketch studio with this project selected.</p></div><button className="primary" onClick={() => openDesign(selected.projectId)}>Open Design District</button></section>}
+      {tab === 'Design' && <section className="design-district-card glass"><span aria-hidden="true">✎</span><div><span className="district-eyebrow">Design District connection</span><h3>Project Design Studio</h3><p>Open this project’s property overview, site photos, saved concepts, plant palette, materials, inspiration, notes, and measurements.</p></div><button className="primary" onClick={() => openDesign(selected.projectId)}>Open Design District</button></section>}
 
       {tab === 'Plant Sourcing' && <div className="district-two-column">
         <form className="panel glass district-form" onSubmit={addSource}><span className="district-eyebrow">Project planting list</span><h3>Add a sourcing record</h3>
@@ -528,7 +590,7 @@ export function ProjectDistrict({ data, setData, initialProjectId, openDesign })
       </div>}
 
       {tab === 'Photos' && <div className="page">
-        <section className="panel glass photo-upload-panel"><div><span className="district-eyebrow">Project gallery</span><h3>Before, during, and after photos</h3><p>Photos are saved locally with the rest of this device’s backup data.</p></div><select value={photoStage} onChange={event => setPhotoStage(event.target.value)}>{['Before', 'During', 'After'].map(item => <option key={item}>{item}</option>)}</select><input placeholder="Caption" value={photoCaption} onChange={event => setPhotoCaption(event.target.value)} /><label className="primary">Add project photo<input type="file" accept="image/*" onChange={event => addPhoto(event.target.files?.[0])} /></label></section>
+        <section className="panel glass photo-upload-panel"><div><span className="district-eyebrow">Project gallery</span><h3>Before, progress, and finished photos</h3><p>Photos are saved locally with the rest of this device’s backup data.</p></div><select value={photoStage} onChange={event => setPhotoStage(event.target.value)}>{['Before', 'Progress', 'Finished'].map(item => <option key={item}>{item}</option>)}</select><input placeholder="Caption" value={photoCaption} onChange={event => setPhotoCaption(event.target.value)} /><label className="primary">Add project photo<input type="file" accept="image/*" onChange={event => addPhoto(event.target.files?.[0])} /></label></section>
         <div className="project-photo-grid">{photos.map(photo => <article className="glass" key={photo.id}><img src={photo.image} alt={photo.caption || `${photo.stage} project photo`} /><div><span>{photo.stage}</span><p>{photo.caption || photo.fileName}</p><button onClick={() => archiveRelated('projectPhotos', photo.id)}>Archive</button><button className="danger" onClick={() => deleteRelated('projectPhotos', photo.id, 'photo')}>Delete</button></div></article>)}{!photos.length && <EmptyDistrict title="No project photos yet" text="Add before, during, and after images as the work progresses." />}</div>
       </div>}
 
@@ -547,18 +609,27 @@ export function ProjectDistrict({ data, setData, initialProjectId, openDesign })
   return <div className="page">
     <div className="district-title"><div><span>Connected operations</span><h2>Project District</h2><p>Every project receives a reusable Tierra Fleur ID and one primary client relationship.</p></div><div className="district-count">{activeProjects.length} active</div></div>
     <div className="district-two-column">
-      <form className="panel glass district-form" onSubmit={addProject}><span className="district-eyebrow">New project</span><h3>Create a Project Hub</h3>
-        <select required value={form.clientId} onChange={event => setForm({ ...form, clientId: event.target.value })}><option value="">Primary client *</option>{data.clients.filter(client => !client.archived).map(client => <option key={client.clientId} value={client.clientId}>{client.name}</option>)}</select>
-        <input required placeholder="Project name *" value={form.name} onChange={event => setForm({ ...form, name: event.target.value })} />
-        <input placeholder="Property address" value={form.propertyAddress} onChange={event => setForm({ ...form, propertyAddress: event.target.value })} />
-        <select value={form.status} onChange={event => setForm({ ...form, status: event.target.value })}>{PROJECT_STATUSES.map(item => <option key={item}>{item}</option>)}</select>
-        <div className="split-fields"><label>Start date<input type="date" value={form.startDate} onChange={event => setForm({ ...form, startDate: event.target.value })} /></label><label>Target completion<input type="date" value={form.targetCompletionDate} onChange={event => setForm({ ...form, targetCompletionDate: event.target.value })} /></label></div>
-        <input type="number" min="0" step="0.01" placeholder="Budget" value={form.budget} onChange={event => setForm({ ...form, budget: event.target.value })} />
-        <textarea placeholder="Scope and project notes" value={form.notes} onChange={event => setForm({ ...form, notes: event.target.value })} />
-        <button className="primary">Create Project Hub</button>
+      <form className="panel glass district-form project-creation-form" onSubmit={addProject} noValidate><span className="district-eyebrow">New project</span><h3>Create a Project Hub</h3><p className="required-fields-note">Primary client, project name, property address, and status are required.</p>
+        {!activeClients.length && <div className="project-client-empty"><strong>A client is needed before a project can be connected.</strong><button type="button" onClick={openClients}>Create Client First</button></div>}
+        <label className={projectErrors.clientId ? 'field-error' : ''}>Primary client <span>*</span>
+          <select aria-required="true" aria-invalid={Boolean(projectErrors.clientId)} value={form.clientId} onChange={event => { setForm({ ...form, clientId: event.target.value }); setProjectErrors(current => ({ ...current, clientId: '' })); }}>
+            <option value="" disabled>Choose an active client</option>
+            {activeClients.map(item => <option key={clientRecordId(item)} value={clientRecordId(item)}>{item.name}</option>)}
+          </select>
+          {projectErrors.clientId && <small>{projectErrors.clientId}</small>}
+          {form.clientId && <em>Selected client: {activeClients.find(item => clientRecordId(item) === form.clientId)?.name || 'Client unavailable'}</em>}
+        </label>
+        <label className={projectErrors.name ? 'field-error' : ''}>Project name <span>*</span><input aria-required="true" aria-invalid={Boolean(projectErrors.name)} placeholder="Front garden renewal" value={form.name} onChange={event => { setForm({ ...form, name: event.target.value }); setProjectErrors(current => ({ ...current, name: '' })); }} />{projectErrors.name && <small>{projectErrors.name}</small>}</label>
+        <label className={projectErrors.propertyAddress ? 'field-error' : ''}>Property address <span>*</span><input aria-required="true" aria-invalid={Boolean(projectErrors.propertyAddress)} placeholder="Street, city, state" value={form.propertyAddress} onChange={event => { setForm({ ...form, propertyAddress: event.target.value }); setProjectErrors(current => ({ ...current, propertyAddress: '' })); }} />{projectErrors.propertyAddress && <small>{projectErrors.propertyAddress}</small>}</label>
+        <label className={projectErrors.status ? 'field-error' : ''}>Status <span>*</span><select aria-required="true" aria-invalid={Boolean(projectErrors.status)} value={form.status} onChange={event => { setForm({ ...form, status: event.target.value }); setProjectErrors(current => ({ ...current, status: '' })); }}>{PROJECT_STATUSES.map(item => <option key={item}>{item}</option>)}</select>{projectErrors.status && <small>{projectErrors.status}</small>}</label>
+        <div className="split-fields"><label>Start date <span>Optional</span><input type="date" value={form.startDate} onChange={event => setForm({ ...form, startDate: event.target.value })} /></label><label>Target completion <span>Optional</span><input type="date" value={form.targetCompletionDate} onChange={event => setForm({ ...form, targetCompletionDate: event.target.value })} /></label></div>
+        <label>Budget <span>Optional</span><input type="number" min="0" step="0.01" placeholder="0.00" value={form.budget} onChange={event => setForm({ ...form, budget: event.target.value })} /></label>
+        <label>Notes <span>Optional</span><textarea placeholder="Scope, priorities, site conditions, and client requests" value={form.notes} onChange={event => setForm({ ...form, notes: event.target.value })} /></label>
+        {Object.values(projectErrors).some(Boolean) && <div className="project-form-summary" role="alert">Please correct the highlighted required fields.</div>}
+        <button className="primary" disabled={submittingProject || !activeClients.length}>{submittingProject ? 'Creating Project Hub…' : 'Create Project Hub'}</button>
       </form>
       <section className="project-district-grid">{activeProjects.map(project => {
-        const linkedClient = data.clients.find(client => client.clientId === project.clientId);
+        const linkedClient = data.clients.find(client => clientRecordId(client) === project.clientId);
         const finance = calculateProjectFinance(data, project);
         return <article className="project-district-card glass" key={project.projectId}>
           <div className="project-card-id"><span>{project.projectId}</span><span>{project.status}</span></div><h3>{project.name}</h3><p>{linkedClient?.name || 'Unassigned client'} • {project.propertyAddress || 'No address'}</p>

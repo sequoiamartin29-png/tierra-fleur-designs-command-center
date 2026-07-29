@@ -9,6 +9,12 @@ import {
   createDistrictStarter,
   migrateDistrictData,
 } from './districts.jsx';
+import {
+  DesignDashboardCards,
+  DesignDistrict,
+  createDesignStarter,
+  migrateDesignData,
+} from './designDistrict.jsx';
 
 const STORAGE_KEY = 'tierraFleurCommandCenterV1';
 
@@ -294,6 +300,7 @@ const starter = {
   nurseries: curatedNurseries,
   plantSourcingVersion: 1,
   ...createDistrictStarter(),
+  ...createDesignStarter(),
   notes: '',
   learning: { history: [], completed: [], preferences: { level: 'Growing', focus: 'Business + Design' } },
 };
@@ -310,10 +317,12 @@ function normalizeData(saved = {}) {
       ]
     : savedNurseries.map(normalizeNursery);
   const districtData = migrateDistrictData(saved);
+  const designData = migrateDesignData(saved);
   return {
     ...starter,
     ...saved,
     ...districtData,
+    ...designData,
     nurseries: migratedNurseries,
     plantSourcingVersion: 1,
   };
@@ -359,12 +368,13 @@ function App() {
 
   const update = (key, value) => setData(prev => ({ ...prev, [key]: value }));
   const nav = (next, options = {}) => {
-    if (['projects', 'sketch'].includes(next) && !options.keepProject) setFocusedProjectId('');
+    if (['projects', 'design', 'sketch'].includes(next) && !options.keepProject) setFocusedProjectId('');
     setView(next);
     setMenuOpen(false);
   };
   const openProject = projectId => { setFocusedProjectId(projectId); nav('projects', { keepProject: true }); };
-  const openDesign = projectId => { setFocusedProjectId(projectId); nav('sketch', { keepProject: true }); };
+  const openDesign = projectId => { setFocusedProjectId(projectId); nav('design', { keepProject: true }); };
+  const openSketch = projectId => { setFocusedProjectId(projectId); nav('sketch', { keepProject: true }); };
 
   const refreshWeather = () => {
     setWeather({ status: 'Loading…', temp: null, detail: 'Finding your location' });
@@ -419,7 +429,7 @@ function App() {
             ['dashboard', '⌂', 'Dashboard'],
             ['clients', '♙', 'Client District'],
             ['projects', '✦', 'Project District'],
-            ['sketch', '✎', 'Design District'],
+            ['design', '✎', 'Design District'],
             ['finance', '$', 'Finance District'],
             ['money', '$', 'Expenses & Receipts'],
             ['estimates', '▤', 'Estimates & Invoices'],
@@ -436,12 +446,13 @@ function App() {
         </nav>
       </aside>
 
-      <UniversalSearch open={searchOpen} onClose={() => setSearchOpen(false)} data={data} navigate={nav} openProject={openProject} />
+      <UniversalSearch open={searchOpen} onClose={() => setSearchOpen(false)} data={data} navigate={nav} openProject={openProject} openDesign={openDesign} />
 
       <main className="main-content">
-        {view === 'dashboard' && <Dashboard data={data} nav={nav} weather={weather} refreshWeather={refreshWeather} />}
+        {view === 'dashboard' && <Dashboard data={data} nav={nav} openDesign={openDesign} weather={weather} refreshWeather={refreshWeather} />}
         {view === 'clients' && <ClientDistrict data={data} setData={setData} openProject={openProject} />}
-        {view === 'projects' && <ProjectDistrict data={data} setData={setData} initialProjectId={focusedProjectId} openDesign={openDesign} />}
+        {view === 'projects' && <ProjectDistrict data={data} setData={setData} initialProjectId={focusedProjectId} openDesign={openDesign} openClients={() => nav('clients')} />}
+        {view === 'design' && <DesignDistrict data={data} setData={setData} initialProjectId={focusedProjectId} openProject={openProject} openProjectDistrict={() => nav('projects')} openSketch={openSketch} />}
         {view === 'sketch' && <SketchStudio projects={data.projects} initialProjectId={focusedProjectId} />}
         {view === 'finance' && <FinanceDistrict data={data} setData={setData} openProject={openProject} />}
         {view === 'money' && <Expenses items={data.expenses} setItems={v => update('expenses', v)} />}
@@ -460,7 +471,7 @@ function SectionTitle({ eyebrow, title, text, action }) {
   return <div className="section-title"><div><span>{eyebrow}</span><h2>{title}</h2><p>{text}</p></div>{action}</div>;
 }
 
-function Dashboard({ data, nav, weather, refreshWeather }) {
+function Dashboard({ data, nav, openDesign, weather, refreshWeather }) {
   const revenue = data.estimates.filter(x => x.status === 'Paid').reduce((sum, x) => sum + Number(x.total || 0), 0);
   const expenses = data.expenses.reduce((sum, x) => sum + Number(x.amount || 0), 0);
   const openProjects = data.projects.filter(x => x.status !== 'Completed').length;
@@ -472,7 +483,7 @@ function Dashboard({ data, nav, weather, refreshWeather }) {
         <span className="eyebrow">Your company, beautifully organized</span>
         <h2>Welcome to the Tierra Fleur command center.</h2>
         <p>Manage clients, projects, money, designs, documents, and daily priorities from one iPad-friendly workspace.</p>
-        <div className="hero-actions"><button className="primary" onClick={() => nav('clients')}>Add a client</button><button onClick={() => nav('sketch')}>Open sketch studio</button></div>
+        <div className="hero-actions"><button className="primary" onClick={() => nav('clients')}>Add a client</button><button onClick={() => openDesign('')}>Enter Design District</button></div>
       </div>
       <div className="weather-card">
         <span>{weather.status}</span>
@@ -490,12 +501,14 @@ function Dashboard({ data, nav, weather, refreshWeather }) {
       <Stat label="Open tasks" value={dueTasks} note="Needs attention" />
     </section>
 
+    <DesignDashboardCards data={data} openDesign={openDesign} />
+
     <section className="dashboard-grid">
       <div className="panel glass">
         <SectionTitle eyebrow="Quick launch" title="Run the business" text="Jump straight into the tools used most often." />
         <div className="quick-grid">
           {[
-            ['New property sketch', 'Sketch over a client photo', 'sketch'],
+            ['Design District', 'Concepts, palettes, photos, and plans', 'design'],
             ['Finance District', 'Personal and Tierra Fleur ledgers', 'finance'],
             ['Record an expense', 'Attach and store a receipt', 'money'],
             ['Create an estimate', 'Build a professional client quote', 'estimates'],
