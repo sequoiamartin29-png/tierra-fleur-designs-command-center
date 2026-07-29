@@ -1,6 +1,8 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import './designDistrict.css';
 import { addTimelineEvent, upsertProjectPlant } from './projectEngine.js';
+import { InteractiveDesignStudio } from './designStudioWorkspace.jsx';
+import { createCanvasSettings, createDefaultDesignLayers, createDesignObject } from './designEngine.js';
 
 const DESIGN_TABS = [
   'Overview',
@@ -179,25 +181,26 @@ function projectActivity(data, projectId) {
 export function DesignDashboardCards({ data, openDesign }) {
   const activeProjects = data.projects.filter(project => !project.archived);
   const activeConcepts = data.designConcepts.filter(concept => !concept.archived);
-  const projectsNeedingDesign = activeProjects.filter(project => {
-    if (['Completed', 'On Hold'].includes(project.status)) return false;
-    const concepts = activeConcepts.filter(concept => concept.projectId === project.projectId);
-    return !concepts.length || ['Lead', 'Consultation', 'Designing'].includes(project.status);
+  const versions = (data.designVersions || []).filter(item => !item.archived);
+  const projectFor = record => activeProjects.find(project => project.projectId === record?.projectId);
+  const inProgress = activeConcepts.filter(item => ['Draft', 'Internal Review', 'Designing'].includes(item.status));
+  const ready = versions.filter(item => ['Ready to Present', 'Recommended'].includes(item.status));
+  const awaitingRevision = versions.filter(item => item.status === 'Needs Revision');
+  const approved = versions.filter(item => item.status === 'Approved');
+  const unlinkedPlants = (data.designObjects || []).filter(item => !item.archived && item.objectType === 'plant' && !item.relatedProjectPlantId);
+  const missingEstimate = activeConcepts.filter(concept => {
+    const placed = (data.designObjects || []).some(item => item.conceptId === concept.designId && !item.archived && ['plant', 'material'].includes(item.objectType));
+    return placed && !data.estimates.some(item => item.projectId === concept.projectId && !item.archived);
   });
-  const awaitingConcepts = activeConcepts.filter(concept => ['Client Review', 'Awaiting Approval'].includes(concept.status));
-  const awaitingProjects = activeProjects.filter(project => awaitingConcepts.some(concept => concept.projectId === project.projectId));
-  const recentConcepts = [...activeConcepts].sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
-  const recentUploads = data.projectPhotos.filter(photo => !photo.archived).sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
-  const recentlyEdited = activeProjects
-    .map(project => ({ project, activity: projectActivity(data, project.projectId) }))
-    .filter(item => item.activity)
-    .sort((a, b) => String(b.activity).localeCompare(String(a.activity)));
+  const recentVersions = [...versions].sort((a, b) => String(b.updatedAt || b.createdAt).localeCompare(String(a.updatedAt || a.createdAt)));
   const cards = [
-    ['Projects needing design', projectsNeedingDesign.length, projectsNeedingDesign[0]?.projectId, projectsNeedingDesign[0]?.name || 'Design queue is clear'],
-    ['Projects awaiting approval', awaitingProjects.length, awaitingProjects[0]?.projectId, awaitingConcepts.find(concept => concept.projectId === awaitingProjects[0]?.projectId)?.name || 'No concepts waiting'],
-    ['Recent concepts', recentConcepts.length, recentConcepts[0]?.projectId, recentConcepts[0]?.name || 'Create the first concept'],
-    ['Recent uploads', recentUploads.length, recentUploads[0]?.projectId, recentUploads[0]?.caption || recentUploads[0]?.fileName || 'No site photos uploaded'],
-    ['Recently edited', recentlyEdited.length, recentlyEdited[0]?.project.projectId, recentlyEdited[0]?.project.name || 'No design edits yet'],
+    ['Designs in progress', inProgress.length, inProgress[0]?.projectId, inProgress[0]?.name || 'Studio queue is clear'],
+    ['Ready to present', ready.length, ready[0]?.projectId, ready[0]?.name || 'No presentation-ready versions'],
+    ['Awaiting revision', awaitingRevision.length, awaitingRevision[0]?.projectId, awaitingRevision[0]?.name || 'No revisions waiting'],
+    ['Approved designs', approved.length, approved[0]?.projectId, approved[0]?.name || 'No approved versions yet'],
+    ['Unlinked design plants', unlinkedPlants.length, unlinkedPlants[0]?.projectId, unlinkedPlants[0]?.label || 'All placed plants are linked'],
+    ['Designs missing estimates', missingEstimate.length, missingEstimate[0]?.projectId, missingEstimate[0]?.name || 'No estimate gaps'],
+    ['Recent revisions', recentVersions.length, recentVersions[0]?.projectId, recentVersions[0]?.name || 'No named versions yet'],
   ];
   return <section className="design-dashboard-strip">
     <div className="design-dashboard-heading"><div><span>Design District</span><h3>Creative work at a glance</h3></div><button onClick={() => openDesign('')}>Enter the studio →</button></div>
@@ -488,7 +491,8 @@ function CanvasWorkspace({ concept, photos, measurements, saveConcept, duplicate
   </div>;
 }
 
-function DesignConcepts({ data, setData, projectId, canvasOnly = false }) {
+function DesignConcepts({ data, setData, project, canvasOnly = false, openPresentation }) {
+  const projectId = project.projectId;
   const [activeId, setActiveId] = useState('');
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
@@ -522,7 +526,14 @@ function DesignConcepts({ data, setData, projectId, canvasOnly = false }) {
       archived: false,
     };
     setData(current => {
-      let next = addTimelineEvent({ ...current, designConcepts: [concept, ...current.designConcepts] }, {
+      const designLayers = createDefaultDesignLayers({ projectId, clientId: project.clientId, conceptId: designId });
+      const designCanvasSettings = createCanvasSettings({ projectId, clientId: project.clientId, conceptId: designId });
+      let next = addTimelineEvent({
+        ...current,
+        designConcepts: [concept, ...current.designConcepts],
+        designLayers: [...designLayers, ...current.designLayers],
+        designCanvasSettings: [designCanvasSettings, ...current.designCanvasSettings],
+      }, {
         projectId,
         eventType: 'design.created',
         title: 'Design concept created',
@@ -569,7 +580,28 @@ function DesignConcepts({ data, setData, projectId, canvasOnly = false }) {
       updatedAt: now(),
       revisionHistory: [{ id: uid('revision'), date: now(), note: `Duplicated from ${concept.name}` }, ...(concept.revisionHistory || [])],
     };
-    setData(current => ({ ...current, designConcepts: [duplicateConcept, ...current.designConcepts] }));
+    setData(current => {
+      const sourceLayers = current.designLayers.filter(item => item.conceptId === concept.designId);
+      const layerMap = new Map();
+      const layers = sourceLayers.map(item => {
+        const layerId = uid('design-layer');
+        layerMap.set(item.layerId, layerId);
+        return { ...clone(item), id: layerId, layerId, conceptId: designId, projectId, clientId: project.clientId, createdAt: now(), updatedAt: now() };
+      });
+      const fallbackLayers = layers.length ? layers : createDefaultDesignLayers({ projectId, clientId: project.clientId, conceptId: designId });
+      const sourceSettings = current.designCanvasSettings.find(item => item.conceptId === concept.designId);
+      const settings = sourceSettings
+        ? { ...clone(sourceSettings), id: `design-canvas-${designId}`, canvasSettingId: `design-canvas-${designId}`, conceptId: designId, projectId, clientId: project.clientId, revision: 0, updatedAt: now(), presentationLayerIds: (sourceSettings.presentationLayerIds || []).map(id => layerMap.get(id)).filter(Boolean) }
+        : createCanvasSettings({ projectId, clientId: project.clientId, conceptId: designId });
+      const objects = current.designObjects.filter(item => item.conceptId === concept.designId && !item.archived).map(item => createDesignObject({ ...clone(item), id: undefined, objectId: undefined, conceptId: designId, projectId, clientId: project.clientId, layerId: layerMap.get(item.layerId) || fallbackLayers[0]?.layerId, legacySourceId: '', createdAt: now(), updatedAt: now() }));
+      return {
+        ...current,
+        designConcepts: [duplicateConcept, ...current.designConcepts],
+        designLayers: [...fallbackLayers, ...current.designLayers],
+        designCanvasSettings: [settings, ...current.designCanvasSettings],
+        designObjects: [...objects, ...current.designObjects],
+      };
+    });
     setActiveId(designId);
   };
   const archive = concept => {
@@ -623,7 +655,7 @@ function DesignConcepts({ data, setData, projectId, canvasOnly = false }) {
       {canvasOnly ? <div className="concept-ribbon-title"><span>Saved design workspace</span><h3>Design Canvas</h3><p>Select a concept, then work with its photo background, layers, markers, and measurements.</p></div> : <form onSubmit={create}><div><span>Multiple versions welcome</span><h3>Design Concepts</h3></div><input required aria-label="New concept name" placeholder="Concept A, Spring Version, Premium Version…" value={name} onChange={event => setName(event.target.value)} /><textarea aria-label="New concept description" placeholder="Describe the design direction and client-facing idea" value={description} onChange={event => setDescription(event.target.value)} /><select aria-label="New concept status" value={newStatus} onChange={event => setNewStatus(event.target.value)}>{['Draft', 'Client Review', 'Awaiting Approval', 'Approved', 'Revision Requested'].map(item => <option key={item}>{item}</option>)}</select><button className="primary">Create concept</button></form>}
       <div>{concepts.map(concept => <button key={concept.designId} className={active?.designId === concept.designId ? 'active' : ''} onClick={() => setActiveId(concept.designId)} aria-label={`Open ${concept.name}`}><span>{concept.status}</span><strong>{concept.name}</strong><small>{dateLabel(concept.updatedAt)}</small></button>)}</div>
     </section>
-    {active && canvasOnly && <CanvasWorkspace key={active.designId} concept={active} photos={photos} measurements={measurements} saveConcept={saveCanvas} duplicateConcept={duplicate} archiveLinkedPlant={archiveLinkedPlant} />}
+    {active && canvasOnly && <InteractiveDesignStudio key={active.designId} data={data} setData={setData} project={project} concept={active} duplicateConcept={duplicate} openPresentation={openPresentation} />}
     {active && !canvasOnly && <section className="concept-detail-card glass">
       <div><span>Reopened saved concept</span><h3>{active.name}</h3><p>Last saved {dateLabel(active.updatedAt)}</p></div>
       <label>Concept name<input value={detailDraft.name} onChange={event => setDetailDraft({ ...detailDraft, name: event.target.value })} /></label>
@@ -863,14 +895,30 @@ function Measurements({ data, setData, projectId }) {
   const blank = { label: '', length: '', width: '', unit: 'ft', areaNotes: '', designId: '' };
   const [form, setForm] = useState(blank);
   const concepts = data.designConcepts.filter(item => item.projectId === projectId && !item.archived);
-  const measurements = data.designMeasurements.filter(item => item.projectId === projectId && !item.archived);
+  const canvasMeasurements = (data.designObjects || []).filter(item => item.projectId === projectId && item.objectType === 'measurement' && !item.archived).map(item => ({
+    id: item.objectId,
+    measurementId: item.objectId,
+    projectId: item.projectId,
+    designId: item.conceptId,
+    label: item.label,
+    length: '',
+    width: '',
+    unit: 'approx.',
+    areaNotes: `Canvas annotation · ${item.clientVisible ? 'Client-visible' : 'Internal'} · ${item.locked ? 'Locked' : 'Editable'}${item.visible ? '' : ' · Hidden'}`,
+    canvasObject: true,
+  }));
+  const measurements = [...data.designMeasurements.filter(item => item.projectId === projectId && !item.archived), ...canvasMeasurements];
   const add = event => {
     event.preventDefault();
     const measurementId = uid('measurement');
     setData(current => ({ ...current, designMeasurements: [{ ...form, id: measurementId, measurementId, projectId, createdAt: now(), archived: false }, ...current.designMeasurements] }));
     setForm(blank);
   };
-  const archive = id => setData(current => ({ ...current, designMeasurements: current.designMeasurements.map(item => item.measurementId === id ? { ...item, archived: true } : item) }));
+  const archive = id => setData(current => ({
+    ...current,
+    designMeasurements: current.designMeasurements.map(item => item.measurementId === id ? { ...item, archived: true } : item),
+    designObjects: (current.designObjects || []).map(item => item.objectId === id ? { ...item, archived: true, updatedAt: now() } : item),
+  }));
   return <div className="measurement-layout">
     <form className="panel glass measurement-form" onSubmit={add}><span>Site dimensions</span><h3>Add a Measurement</h3><label>Label<input required placeholder="Front bed, fence run, patio…" value={form.label} onChange={event => setForm({ ...form, label: event.target.value })} /></label><div><label>Length<input required type="number" min="0" step="0.01" placeholder="0" value={form.length} onChange={event => setForm({ ...form, length: event.target.value })} /></label><label>Width<input type="number" min="0" step="0.01" placeholder="Optional" value={form.width} onChange={event => setForm({ ...form, width: event.target.value })} /></label></div><label>Unit<select value={form.unit} onChange={event => setForm({ ...form, unit: event.target.value })}>{['in', 'ft', 'yd', 'm'].map(item => <option key={item}>{item}</option>)}</select></label><label>Related concept<select value={form.designId} onChange={event => setForm({ ...form, designId: event.target.value })}><option value="">Project-wide measurement</option>{concepts.map(item => <option key={item.designId} value={item.designId}>{item.name}</option>)}</select></label><label>Area notes<textarea placeholder="Area, method, reference point, or field note" value={form.areaNotes} onChange={event => setForm({ ...form, areaNotes: event.target.value })} /></label><button className="primary">Save measurement</button></form>
     <section className="measurement-cards">{measurements.map(item => {
@@ -881,7 +929,7 @@ function Measurements({ data, setData, projectId }) {
   </div>;
 }
 
-export function DesignDistrict({ data, setData, initialProjectId = '', openProject, openProjectDistrict, openSketch }) {
+export function DesignDistrict({ data, setData, initialProjectId = '', openProject, openProjectDistrict, openSketch, openPresentation }) {
   const [selectedId, setSelectedId] = useState(initialProjectId);
   const [tab, setTab] = useState('Overview');
   useEffect(() => {
@@ -901,8 +949,8 @@ export function DesignDistrict({ data, setData, initialProjectId = '', openProje
     <nav className="design-studio-tabs" aria-label="Design Studio sections">{DESIGN_TABS.map(item => <button key={item} className={tab === item ? 'active' : ''} onClick={() => setTab(item)}>{item}</button>)}</nav>
     {tab === 'Overview' && <PropertyOverview data={data} project={project} openProject={openProject} openSketch={openSketch} setTab={setTab} />}
     {tab === 'Property Photos' && <SitePhotos data={data} setData={setData} projectId={project.projectId} />}
-    {tab === 'Design Concepts' && <DesignConcepts data={data} setData={setData} projectId={project.projectId} />}
-    {tab === 'Design Canvas' && <DesignConcepts data={data} setData={setData} projectId={project.projectId} canvasOnly />}
+    {tab === 'Design Concepts' && <DesignConcepts data={data} setData={setData} project={project} />}
+    {tab === 'Design Canvas' && <DesignConcepts data={data} setData={setData} project={project} canvasOnly openPresentation={openPresentation} />}
     {tab === 'Plant Palette' && <PlantPalette data={data} setData={setData} projectId={project.projectId} />}
     {tab === 'Materials' && <MaterialLibrary data={data} setData={setData} projectId={project.projectId} />}
     {tab === 'Inspiration Board' && <InspirationBoard data={data} setData={setData} projectId={project.projectId} />}

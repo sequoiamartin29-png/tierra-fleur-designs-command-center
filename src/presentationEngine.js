@@ -102,6 +102,7 @@ export function createPresentationSettings(project = {}) {
     showCare: false,
     showTimeline: false,
     showPlantDetails: false,
+    selectedDesignVersionId: '',
     ready: false,
     updatedAt: now(),
     archived: false,
@@ -155,6 +156,7 @@ function normalizeSettings(item, project) {
     showCare: bool(item.showCare),
     showTimeline: bool(item.showTimeline),
     showPlantDetails: bool(item.showPlantDetails),
+    selectedDesignVersionId: item.selectedDesignVersionId || '',
     ready: bool(item.ready),
     archived: Boolean(item.archived),
   };
@@ -410,12 +412,77 @@ function safePhoto(item) {
     displayOrder: Number(item.displayOrder || 0),
     locationLabel: item.locationLabel || '',
     comparisonGroup: item.comparisonGroup || '',
+    safeForPresentation: true,
   };
 }
 
-function safeConcept(item) {
+function safeConcept(item, data, presentationSettings) {
+  const conceptId = item.designId || item.id;
+  const requestedVersion = records(data.designVersions).find(version => version.versionId === presentationSettings.selectedDesignVersionId && version.conceptId === conceptId && active(version));
+  const preferredVersion = requestedVersion || records(data.designVersions)
+    .filter(version => version.conceptId === conceptId && active(version))
+    .sort((a, b) => {
+      const rank = version => version.status === 'Approved' ? 4 : version.status === 'Client Selected' ? 3 : version.status === 'Recommended' ? 2 : 1;
+      return rank(b) - rank(a) || String(b.updatedAt || b.createdAt).localeCompare(String(a.updatedAt || a.createdAt));
+    })[0];
+  const sourceObjects = preferredVersion?.snapshot?.objects || records(data.designObjects).filter(object => object.conceptId === conceptId);
+  const sourceLayers = preferredVersion?.snapshot?.layers || records(data.designLayers).filter(layer => layer.conceptId === conceptId);
+  const sourceSettings = preferredVersion?.snapshot?.canvasSettings || records(data.designCanvasSettings).find(setting => setting.conceptId === conceptId) || null;
+  const safeLayers = sourceLayers.filter(layer => active(layer) && layer.visible !== false && bool(layer.clientVisible) && layer.presentationVisible !== false).map(layer => ({
+    id: layer.layerId || layer.id,
+    layerId: layer.layerId || layer.id,
+    name: layer.name || 'Design layer',
+    order: Number(layer.order || 0),
+    visible: true,
+    clientVisible: true,
+    presentationVisible: true,
+    exportEnabled: layer.exportEnabled !== false,
+    archived: false,
+  }));
+  const safeLayerIds = new Set(safeLayers.map(layer => layer.layerId));
+  const safeObjects = sourceObjects.filter(object => active(object) && object.visible !== false && bool(object.clientVisible) && object.exportEnabled !== false && safeLayerIds.has(object.layerId)).map(object => {
+    const style = object.style || {};
+    return {
+      id: object.objectId || object.id,
+      objectId: object.objectId || object.id,
+      layerId: object.layerId || '',
+      objectType: object.objectType || 'annotation',
+      x: Number(object.x || 0),
+      y: Number(object.y || 0),
+      width: Number(object.width || 0),
+      height: Number(object.height || 0),
+      rotation: Number(object.rotation || 0),
+      zIndex: Number(object.zIndex || 0),
+      opacity: Number(object.opacity ?? 1),
+      visible: true,
+      clientVisible: true,
+      exportEnabled: true,
+      label: object.label || '',
+      points: records(object.points).map(point => ({ x: Number(point.x || 0), y: Number(point.y || 0) })),
+      style: {
+        stroke: style.stroke || '',
+        strokeWidth: Number(style.strokeWidth || 0),
+        strokeOpacity: Number(style.strokeOpacity ?? 1),
+        fill: style.fill || '',
+        fillOpacity: Number(style.fillOpacity ?? 0),
+        lineStyle: style.lineStyle || 'solid',
+        fontSize: Number(style.fontSize || 0),
+        symbol: style.symbol || '',
+        pattern: style.pattern || '',
+        quantity: Number(style.quantity || 1),
+        installationArea: style.installationArea || '',
+        matureSpreadFeet: Number(style.matureSpreadFeet || 0),
+        customSpreadFeet: Number(style.customSpreadFeet || 0),
+        showMatureSpread: bool(style.showMatureSpread),
+        showLabel: style.showLabel !== false,
+        category: style.category || '',
+        finish: style.finish || '',
+      },
+      archived: false,
+    };
+  });
   return {
-    conceptId: item.designId || item.id,
+    conceptId,
     name: item.name || 'Design concept',
     description: item.description || '',
     status: item.status || '',
@@ -440,6 +507,32 @@ function safeConcept(item) {
         y: Number(placement.y || 0),
       })),
     },
+    designStudio: sourceSettings ? {
+      versionId: preferredVersion?.versionId || '',
+      versionName: preferredVersion?.name || 'Live design',
+      versionStatus: preferredVersion?.status || item.status || 'Draft',
+      objects: safeObjects,
+      layers: safeLayers,
+      settings: {
+        backgroundPhotoId: sourceSettings.backgroundPhotoId || item.canvas?.basePhotoId || '',
+        backgroundVisible: sourceSettings.backgroundVisible !== false,
+        backgroundOpacity: Number(sourceSettings.backgroundOpacity ?? .82),
+        backgroundRotation: Number(sourceSettings.backgroundRotation || 0),
+        backgroundZoom: Number(sourceSettings.backgroundZoom || 1),
+        backgroundPanX: Number(sourceSettings.backgroundPanX || 0),
+        backgroundPanY: Number(sourceSettings.backgroundPanY || 0),
+        backgroundFit: sourceSettings.backgroundFit || 'cover',
+        viewportZoom: Number(sourceSettings.viewportZoom || 1),
+        viewportPanX: Number(sourceSettings.viewportPanX || 0),
+        viewportPanY: Number(sourceSettings.viewportPanY || 0),
+        gridVisible: false,
+        showAllMatureSpread: bool(sourceSettings.showAllMatureSpread),
+        scaleCalibration: {
+          calibrated: bool(sourceSettings.scaleCalibration?.calibrated),
+          pixelsPerFoot: Number(sourceSettings.scaleCalibration?.pixelsPerFoot || 0),
+        },
+      },
+    } : null,
   };
 }
 
@@ -503,7 +596,7 @@ export function buildPresentationViewModel(data, projectId) {
     .filter(item => item.projectId === projectId && isVisible(item) && item.private !== true && item.internal !== true)
     .map(safePhoto)
     .sort((a, b) => a.displayOrder - b.displayOrder);
-  const concepts = records(data.designConcepts).filter(item => item.projectId === projectId && isVisible(item)).map(safeConcept);
+  const concepts = records(data.designConcepts).filter(item => item.projectId === projectId && isVisible(item)).map(item => safeConcept(item, data, settings));
   const plants = records(data.projectPlants).filter(item => item.projectId === projectId && isVisible(item)).map(item => safePlant(item, settings));
   const materials = records(data.designMaterials).filter(item => isVisible(item)
     && (!item.projectId || item.projectId === projectId)

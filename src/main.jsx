@@ -16,6 +16,10 @@ import {
   migrateDesignData,
 } from './designDistrict.jsx';
 import {
+  createDesignStudioStarter,
+  migrateDesignStudioData,
+} from './designEngine.js';
+import {
   addTimelineEvent,
   createProjectEngineStarter,
   migrateProjectEngineData,
@@ -316,6 +320,7 @@ const starter = {
   plantSourcingVersion: 1,
   ...createDistrictStarter(),
   ...createDesignStarter(),
+  ...createDesignStudioStarter(),
   ...createProjectEngineStarter(),
   ...createPresentationStarter(),
   notes: '',
@@ -336,10 +341,21 @@ function normalizeData(saved = {}) {
   const districtData = migrateDistrictData(saved);
   const designData = migrateDesignData(saved);
   const projectEngineData = migrateProjectEngineData(saved, { projects: districtData.projects, clients: districtData.clients });
+  const designStudioData = migrateDesignStudioData({
+    ...saved,
+    ...districtData,
+    ...designData,
+    ...projectEngineData,
+  }, {
+    projects: districtData.projects,
+    clients: districtData.clients,
+    designConcepts: designData.designConcepts,
+  });
   const presentationData = migratePresentationData({
     ...saved,
     ...districtData,
     ...designData,
+    ...designStudioData,
     ...projectEngineData,
   }, {
     projects: districtData.projects,
@@ -357,6 +373,7 @@ function normalizeData(saved = {}) {
     ...saved,
     ...districtData,
     ...designData,
+    ...designStudioData,
     ...projectEngineData,
     ...presentationData,
     nurseries: migratedNurseries,
@@ -495,7 +512,7 @@ function App() {
         {view === 'dashboard' && <Dashboard data={data} nav={nav} openProject={openProject} openDesign={openDesign} weather={weather} refreshWeather={refreshWeather} />}
         {view === 'clients' && <ClientDistrict data={data} setData={setData} openProject={openProject} />}
         {view === 'projects' && <ProjectDistrict data={data} setData={setData} initialProjectId={focusedProjectId} openDesign={openDesign} openClients={() => nav('clients')} openEstimates={() => nav('estimates')} openFinance={() => nav('finance')} openPresentation={openPresentation} />}
-        {view === 'design' && <DesignDistrict data={data} setData={setData} initialProjectId={focusedProjectId} openProject={openProject} openProjectDistrict={() => nav('projects')} openSketch={openSketch} />}
+        {view === 'design' && <DesignDistrict data={data} setData={setData} initialProjectId={focusedProjectId} openProject={openProject} openProjectDistrict={() => nav('projects')} openSketch={openSketch} openPresentation={openPresentation} />}
         {view === 'sketch' && <SketchStudio projects={data.projects} initialProjectId={focusedProjectId} />}
         {view === 'finance' && <FinanceDistrict data={data} setData={setData} openProject={openProject} />}
         {view === 'money' && <Expenses data={data} setData={setData} />}

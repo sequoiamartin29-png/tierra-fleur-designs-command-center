@@ -30,3 +30,4 @@
 @media(max-width:900px){.concept-ribbon form{grid-template-columns:1fr 1fr}.concept-ribbon form>div{grid-column:1/-1}.concept-ribbon form>button{grid-column:1/-1}.design-photo-error{grid-column:1/-1}}
 @media(max-width:760px){.design-no-projects>div{flex-direction:column}.concept-ribbon form,.concept-detail-card{grid-template-columns:1fr}.concept-ribbon form>div,.concept-ribbon form>button,.concept-detail-card>div:first-child,.concept-detail-card>label:nth-of-type(2),.concept-detail-card>div:last-child{grid-column:auto}.concept-detail-card>div:last-child{display:grid;grid-template-columns:1fr 1fr}.design-photo-form-actions{grid-column:1;display:grid;grid-template-columns:1fr}.design-photo-error{grid-column:1}}
 .design-photo-form>.design-photo-form-actions,.design-photo-form>.design-photo-error{grid-row:auto}
+.design-dashboard-strip>div:last-child{grid-template-columns:repeat(auto-fit,minmax(150px,1fr))}

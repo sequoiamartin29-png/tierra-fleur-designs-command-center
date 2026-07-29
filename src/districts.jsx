@@ -272,6 +272,30 @@ export function UniversalSearch({ open, onClose, data, navigate, openProject, op
       action: () => navigate('finance'),
     }));
     const designRecords = [
+      ...(data.designVersions || []).filter(item => match(item.name, item.status, item.revisionNotes)).map(item => ({
+        id: item.versionId,
+        projectId: item.projectId,
+        title: item.name,
+        detail: `${item.status} • Design version`,
+      })),
+      ...(data.designNotes || []).filter(item => match(item.text, item.category, item.authorLabel)).map(item => ({
+        id: item.noteId,
+        projectId: item.projectId,
+        title: item.text || 'Design note',
+        detail: `${item.category} • ${item.clientVisible ? 'Client-visible' : 'Internal'} design note`,
+      })),
+      ...(data.designObjects || []).filter(item => match(item.label, item.notes, item.objectType, item.style?.installationArea)).map(item => ({
+        id: item.objectId,
+        projectId: item.projectId,
+        title: item.label || `${item.objectType} object`,
+        detail: `${item.objectType} • Canvas object`,
+      })),
+      ...(data.designTemplates || []).filter(item => match(item.name, item.description)).map(item => ({
+        id: item.templateId,
+        projectId: '',
+        title: item.name,
+        detail: 'Reusable design template',
+      })),
       ...data.designConcepts.filter(item => match(item.name, item.status, item.notes?.general, item.notes?.clientRequests, item.notes?.maintenance, item.notes?.futureIdeas)).map(item => ({
         id: item.designId,
         projectId: item.projectId,
@@ -609,7 +633,7 @@ export function ProjectDistrict({ data, setData, initialProjectId, openDesign, o
   const confirmDeleteProject = () => {
     const project = deleteCandidate;
     if (!project) return;
-    const isTemporaryTest = /^Codex Phase [45] Test/.test(project.name);
+    const isTemporaryTest = /^Codex Phase [456] Test/.test(project.name);
     setData(current => {
       if (!isTemporaryTest) return { ...current, projects: current.projects.filter(item => item.projectId !== project.projectId) };
       const projectId = project.projectId;
@@ -626,9 +650,16 @@ export function ProjectDistrict({ data, setData, initialProjectId, openDesign, o
         projectPhotos: current.projectPhotos.filter(item => item.projectId !== projectId),
         projectNotes: current.projectNotes.filter(item => item.projectId !== projectId),
         designConcepts: current.designConcepts.filter(item => item.projectId !== projectId),
-        designPlants: current.designPlants.filter(item => !/^Codex Phase [45] Test/.test(String(item.commonName || ''))),
+        designPlants: current.designPlants.filter(item => !/^Codex Phase [456] Test/.test(String(item.commonName || ''))),
         designInspirations: current.designInspirations.filter(item => item.projectId !== projectId),
         designMeasurements: current.designMeasurements.filter(item => item.projectId !== projectId),
+        designObjects: current.designObjects.filter(item => item.projectId !== projectId),
+        designLayers: current.designLayers.filter(item => item.projectId !== projectId),
+        designCanvasSettings: current.designCanvasSettings.filter(item => item.projectId !== projectId),
+        designVersions: current.designVersions.filter(item => item.projectId !== projectId),
+        designNotes: current.designNotes.filter(item => item.projectId !== projectId),
+        designLegendSettings: current.designLegendSettings.filter(item => item.projectId !== projectId),
+        designExportSettings: current.designExportSettings.filter(item => item.projectId !== projectId),
         businessTransactions: current.businessTransactions.filter(item => item.projectId !== projectId),
         expenses: current.expenses.filter(item => item.projectId !== projectId),
         estimates: current.estimates.filter(item => item.projectId !== projectId),
