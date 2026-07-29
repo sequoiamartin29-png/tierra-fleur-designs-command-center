@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import './designDistrict.css';
+import { addTimelineEvent, upsertProjectPlant } from './projectEngine.js';
 
 const DESIGN_TABS = [
   'Overview',
@@ -324,7 +325,15 @@ function SitePhotos({ data, setData, projectId }) {
       createdAt: now(),
       archived: false,
     };
-    setData(current => ({ ...current, projectPhotos: [photo, ...current.projectPhotos] }));
+    setData(current => addTimelineEvent({ ...current, projectPhotos: [photo, ...current.projectPhotos] }, {
+      projectId,
+      eventType: 'photo.uploaded',
+      title: 'Property photo uploaded',
+      description: photo.caption || photo.fileName,
+      relatedRecordId: photo.photoId,
+      dedupeKey: `photo.uploaded:${photo.photoId}`,
+      automatic: true,
+    }));
     setForm(blank);
     setFile(null);
     setPhotoError('');
@@ -373,7 +382,7 @@ function SitePhotos({ data, setData, projectId }) {
   </div>;
 }
 
-function CanvasWorkspace({ concept, photos, measurements, saveConcept, duplicateConcept }) {
+function CanvasWorkspace({ concept, photos, measurements, saveConcept, duplicateConcept, archiveLinkedPlant }) {
   const [draft, setDraft] = useState(() => clone(concept.canvas));
   const [history, setHistory] = useState([]);
   const [future, setFuture] = useState([]);
@@ -411,7 +420,13 @@ function CanvasWorkspace({ concept, photos, measurements, saveConcept, duplicate
   };
   const removePlacement = () => {
     if (!selectedPlacement) return;
+    const placement = draft.placements.find(item => item.id === selectedPlacement);
+    if (!confirm(`Remove ${placement?.label || 'this marker'} from the design?`)) return;
+    const archiveFromPlan = placement?.projectPlantId
+      ? confirm('Also archive the linked item from the Project Plant Plan?\n\nOK: archive from Plant Plan too\nCancel: remove from design only')
+      : false;
     change(current => ({ ...current, placements: current.placements.filter(item => item.id !== selectedPlacement) }));
+    if (archiveFromPlan) archiveLinkedPlant(placement);
     setSelectedPlacement('');
   };
   const visibleLayers = new Map(draft.layers.map(layer => [layer.name, layer.visible]));
@@ -506,7 +521,27 @@ function DesignConcepts({ data, setData, projectId, canvasOnly = false }) {
       canvas: emptyCanvas(),
       archived: false,
     };
-    setData(current => ({ ...current, designConcepts: [concept, ...current.designConcepts] }));
+    setData(current => {
+      let next = addTimelineEvent({ ...current, designConcepts: [concept, ...current.designConcepts] }, {
+        projectId,
+        eventType: 'design.created',
+        title: 'Design concept created',
+        description: concept.name,
+        relatedRecordId: designId,
+        dedupeKey: `design.created:${designId}`,
+        automatic: true,
+      });
+      if (concept.status === 'Approved') next = addTimelineEvent(next, {
+        projectId,
+        eventType: 'design.approved',
+        title: 'Design concept approved',
+        description: concept.name,
+        relatedRecordId: designId,
+        dedupeKey: `design.approved:${designId}`,
+        automatic: true,
+      });
+      return next;
+    });
     setActiveId(designId);
     setName('');
     setDescription('');
@@ -542,9 +577,10 @@ function DesignConcepts({ data, setData, projectId, canvasOnly = false }) {
   };
   const saveDetails = () => {
     if (!active || !detailDraft.name.trim()) return;
-    setData(current => ({
-      ...current,
-      designConcepts: current.designConcepts.map(item => item.designId === active.designId ? {
+    setData(current => {
+      let next = {
+        ...current,
+        designConcepts: current.designConcepts.map(item => item.designId === active.designId ? {
         ...item,
         name: detailDraft.name.trim(),
         description: detailDraft.description.trim(),
@@ -552,8 +588,34 @@ function DesignConcepts({ data, setData, projectId, canvasOnly = false }) {
         updatedAt: now(),
         revisionHistory: [{ id: uid('revision'), date: now(), note: 'Concept details saved' }, ...(item.revisionHistory || [])],
       } : item),
-    }));
+      };
+      if (active.status !== 'Approved' && detailDraft.status === 'Approved') next = addTimelineEvent(next, {
+        projectId,
+        eventType: 'design.approved',
+        title: 'Design concept approved',
+        description: detailDraft.name.trim(),
+        relatedRecordId: active.designId,
+        dedupeKey: `design.approved:${active.designId}`,
+        automatic: true,
+      });
+      return next;
+    });
   };
+  const archiveLinkedPlant = placement => setData(current => {
+    let next = {
+      ...current,
+      projectPlants: current.projectPlants.map(item => item.projectPlantId === placement.projectPlantId ? { ...item, status: 'Archived', archived: true, updatedAt: now() } : item),
+    };
+    return addTimelineEvent(next, {
+      projectId,
+      eventType: 'plant.archived',
+      title: 'Plant archived from Project Plant Plan',
+      description: `${placement.label} was removed from the design and archived from the Plant Plan.`,
+      relatedRecordId: placement.projectPlantId,
+      dedupeKey: `plant.archived:${placement.projectPlantId}`,
+      automatic: true,
+    });
+  });
   const photos = data.projectPhotos.filter(item => item.projectId === projectId && !item.archived);
   const measurements = data.designMeasurements.filter(item => item.projectId === projectId && !item.archived && (!item.designId || item.designId === active?.designId));
   return <div className="design-concepts-page">
@@ -561,7 +623,7 @@ function DesignConcepts({ data, setData, projectId, canvasOnly = false }) {
       {canvasOnly ? <div className="concept-ribbon-title"><span>Saved design workspace</span><h3>Design Canvas</h3><p>Select a concept, then work with its photo background, layers, markers, and measurements.</p></div> : <form onSubmit={create}><div><span>Multiple versions welcome</span><h3>Design Concepts</h3></div><input required aria-label="New concept name" placeholder="Concept A, Spring Version, Premium Version…" value={name} onChange={event => setName(event.target.value)} /><textarea aria-label="New concept description" placeholder="Describe the design direction and client-facing idea" value={description} onChange={event => setDescription(event.target.value)} /><select aria-label="New concept status" value={newStatus} onChange={event => setNewStatus(event.target.value)}>{['Draft', 'Client Review', 'Awaiting Approval', 'Approved', 'Revision Requested'].map(item => <option key={item}>{item}</option>)}</select><button className="primary">Create concept</button></form>}
       <div>{concepts.map(concept => <button key={concept.designId} className={active?.designId === concept.designId ? 'active' : ''} onClick={() => setActiveId(concept.designId)} aria-label={`Open ${concept.name}`}><span>{concept.status}</span><strong>{concept.name}</strong><small>{dateLabel(concept.updatedAt)}</small></button>)}</div>
     </section>
-    {active && canvasOnly && <CanvasWorkspace key={active.designId} concept={active} photos={photos} measurements={measurements} saveConcept={saveCanvas} duplicateConcept={duplicate} />}
+    {active && canvasOnly && <CanvasWorkspace key={active.designId} concept={active} photos={photos} measurements={measurements} saveConcept={saveCanvas} duplicateConcept={duplicate} archiveLinkedPlant={archiveLinkedPlant} />}
     {active && !canvasOnly && <section className="concept-detail-card glass">
       <div><span>Reopened saved concept</span><h3>{active.name}</h3><p>Last saved {dateLabel(active.updatedAt)}</p></div>
       <label>Concept name<input value={detailDraft.name} onChange={event => setDetailDraft({ ...detailDraft, name: event.target.value })} /></label>
@@ -580,6 +642,7 @@ function PlantPalette({ data, setData, projectId }) {
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState('All');
   const [conceptId, setConceptId] = useState('');
+  const [placementMode, setPlacementMode] = useState('Add to Design Only');
   const concepts = data.designConcepts.filter(item => item.projectId === projectId && !item.archived);
   useEffect(() => { if (!conceptId && concepts[0]) setConceptId(concepts[0].designId); }, [conceptId, concepts]);
   const sourcing = data.sourcingRecords.filter(item => item.projectId === projectId && !item.archived);
@@ -600,22 +663,59 @@ function PlantPalette({ data, setData, projectId }) {
   };
   const addToConcept = plant => {
     if (!conceptId) return;
-    setData(current => ({ ...current, designConcepts: current.designConcepts.map(concept => {
+    setData(current => {
+      let next = current;
+      let projectPlantId = '';
+      if (placementMode === 'Add to Project Plant Plan') {
+        const project = current.projects.find(item => item.projectId === projectId);
+        const result = upsertProjectPlant(current, {
+          projectId,
+          clientId: project?.clientId || '',
+          plantName: plant.commonName || plant.plant,
+          scientificName: plant.scientificName || '',
+          category: plant.category || 'Plant',
+          quantity: 1,
+          conceptId,
+          designPlantId: plant.plantId || '',
+          sourcingRecordId: plant.sourcingRecordId || '',
+          nurseryId: plant.nurseryId || '',
+          unitCost: plant.unitCost || plant.estimatedCost || '',
+          status: 'Proposed',
+          notes: plant.notes || '',
+        });
+        next = result.state;
+        projectPlantId = result.record.projectPlantId;
+        if (result.created) next = addTimelineEvent(next, {
+          projectId,
+          eventType: 'plant.added',
+          title: 'Plant added to project',
+          description: `${result.record.plantName} was added from the Design District to the Project Plant Plan.`,
+          relatedRecordId: projectPlantId,
+          dedupeKey: `plant.added:${projectPlantId}`,
+          automatic: true,
+        });
+      }
+      return { ...next, designConcepts: next.designConcepts.map(concept => {
       if (concept.designId !== conceptId) return concept;
       const index = concept.canvas.placements.length;
       const layer = plant.category === 'Tree' ? 'Trees' : plant.category === 'Shrub' ? 'Shrubs' : plant.category === 'Container' ? 'Containers' : 'Flowers';
       return {
         ...concept,
         updatedAt: now(),
-        canvas: { ...concept.canvas, placements: [...concept.canvas.placements, { id: uid('placement'), sourceId: plant.plantId, type: 'plant', label: plant.commonName, layer, x: 18 + (index * 13) % 68, y: 22 + (index * 17) % 58 }] },
+        canvas: { ...concept.canvas, placements: [...concept.canvas.placements, { id: uid('placement'), sourceId: plant.plantId, projectPlantId, type: 'plant', label: plant.commonName, layer, x: 18 + (index * 13) % 68, y: 22 + (index * 17) % 58 }] },
         revisionHistory: [{ id: uid('revision'), date: now(), note: `${plant.commonName} added to canvas` }, ...(concept.revisionHistory || [])],
       };
-    }) }));
+      }) };
+    });
   };
   const addSourcedPlant = record => addToConcept({
     plantId: record.sourcingRecordId || record.id,
     commonName: record.plant,
     category: 'Flower',
+    sourcingRecordId: record.sourcingRecordId || record.id,
+    nurseryId: record.nurseryId,
+    unitCost: record.unitCost || record.estimatedCost,
+    notes: record.notes,
   });
   const patchPlant = (plantId, changes) => setData(current => ({ ...current, designPlants: current.designPlants.map(item => item.plantId === plantId ? { ...item, ...changes } : item) }));
   return <div className="design-library-page">
@@ -623,7 +723,7 @@ function PlantPalette({ data, setData, projectId }) {
       <div><span>Plant Sourcing District connection</span><h3>Approved Plant Palette</h3><p>Build a searchable, reusable palette and place botanical markers into a saved concept.</p></div>
       <input type="search" placeholder="Common name, scientific name, category, sun, shade, trait…" value={query} onChange={event => setQuery(event.target.value)} />
       <div className="design-filter-chips">{['All', 'Sun', 'Shade', 'Evergreen', 'Fruit', 'Native', 'Pollinator', 'Favorite'].map(item => <button key={item} className={filter === item ? 'active' : ''} onClick={() => setFilter(item)}>{item}</button>)}</div>
-      <div className="design-library-actions"><label>Add selections to<select value={conceptId} onChange={event => setConceptId(event.target.value)}><option value="">Choose a design concept</option>{concepts.map(item => <option key={item.designId} value={item.designId}>{item.name}</option>)}</select></label><button className="primary" onClick={() => setShowForm(value => !value)}>{showForm ? 'Close plant form' : 'Add approved plant'}</button></div>
+      <div className="design-library-actions"><label>Add selections to<select value={conceptId} onChange={event => setConceptId(event.target.value)}><option value="">Choose a design concept</option>{concepts.map(item => <option key={item.designId} value={item.designId}>{item.name}</option>)}</select></label><label>When placed<select value={placementMode} onChange={event => setPlacementMode(event.target.value)}><option>Add to Design Only</option><option>Add to Project Plant Plan</option></select></label><button className="primary" onClick={() => setShowForm(value => !value)}>{showForm ? 'Close plant form' : 'Add approved plant'}</button></div>
     </section>
     {showForm && <form className="panel glass design-plant-form" onSubmit={addPlant}>
       <input required placeholder="Common name *" value={form.commonName} onChange={event => setForm({ ...form, commonName: event.target.value })} />

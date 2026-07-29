@@ -15,6 +15,12 @@ import {
   createDesignStarter,
   migrateDesignData,
 } from './designDistrict.jsx';
+import {
+  addTimelineEvent,
+  createProjectEngineStarter,
+  migrateProjectEngineData,
+} from './projectEngine.js';
+import { Phase4DashboardCards } from './projectWorkspace.jsx';
 
 const STORAGE_KEY = 'tierraFleurCommandCenterV1';
 
@@ -301,6 +307,7 @@ const starter = {
   plantSourcingVersion: 1,
   ...createDistrictStarter(),
   ...createDesignStarter(),
+  ...createProjectEngineStarter(),
   notes: '',
   learning: { history: [], completed: [], preferences: { level: 'Growing', focus: 'Business + Design' } },
 };
@@ -318,11 +325,13 @@ function normalizeData(saved = {}) {
     : savedNurseries.map(normalizeNursery);
   const districtData = migrateDistrictData(saved);
   const designData = migrateDesignData(saved);
+  const projectEngineData = migrateProjectEngineData(saved, { projects: districtData.projects, clients: districtData.clients });
   return {
     ...starter,
     ...saved,
     ...districtData,
     ...designData,
+    ...projectEngineData,
     nurseries: migratedNurseries,
     plantSourcingVersion: 1,
   };
@@ -449,14 +458,14 @@ function App() {
       <UniversalSearch open={searchOpen} onClose={() => setSearchOpen(false)} data={data} navigate={nav} openProject={openProject} openDesign={openDesign} />
 
       <main className="main-content">
-        {view === 'dashboard' && <Dashboard data={data} nav={nav} openDesign={openDesign} weather={weather} refreshWeather={refreshWeather} />}
+        {view === 'dashboard' && <Dashboard data={data} nav={nav} openProject={openProject} openDesign={openDesign} weather={weather} refreshWeather={refreshWeather} />}
         {view === 'clients' && <ClientDistrict data={data} setData={setData} openProject={openProject} />}
-        {view === 'projects' && <ProjectDistrict data={data} setData={setData} initialProjectId={focusedProjectId} openDesign={openDesign} openClients={() => nav('clients')} />}
+        {view === 'projects' && <ProjectDistrict data={data} setData={setData} initialProjectId={focusedProjectId} openDesign={openDesign} openClients={() => nav('clients')} openEstimates={() => nav('estimates')} openFinance={() => nav('finance')} />}
         {view === 'design' && <DesignDistrict data={data} setData={setData} initialProjectId={focusedProjectId} openProject={openProject} openProjectDistrict={() => nav('projects')} openSketch={openSketch} />}
         {view === 'sketch' && <SketchStudio projects={data.projects} initialProjectId={focusedProjectId} />}
         {view === 'finance' && <FinanceDistrict data={data} setData={setData} openProject={openProject} />}
-        {view === 'money' && <Expenses items={data.expenses} setItems={v => update('expenses', v)} />}
-        {view === 'estimates' && <Estimates items={data.estimates} setItems={v => update('estimates', v)} clients={data.clients} projects={data.projects} services={data.services} business={data.business} />}
+        {view === 'money' && <Expenses data={data} setData={setData} />}
+        {view === 'estimates' && <Estimates data={data} setData={setData} />}
         {view === 'tasks' && <Tasks items={data.tasks} setItems={v => update('tasks', v)} />}
         {view === 'services' && <Services items={data.services} setItems={v => update('services', v)} />}
         {view === 'plant-sourcing' && <PlantSourcingDirectory items={data.nurseries} setItems={v => update('nurseries', v)} />}
@@ -471,7 +480,7 @@ function SectionTitle({ eyebrow, title, text, action }) {
   return <div className="section-title"><div><span>{eyebrow}</span><h2>{title}</h2><p>{text}</p></div>{action}</div>;
 }
 
-function Dashboard({ data, nav, openDesign, weather, refreshWeather }) {
+function Dashboard({ data, nav, openProject, openDesign, weather, refreshWeather }) {
   const revenue = data.estimates.filter(x => x.status === 'Paid').reduce((sum, x) => sum + Number(x.total || 0), 0);
   const expenses = data.expenses.reduce((sum, x) => sum + Number(x.amount || 0), 0);
   const openProjects = data.projects.filter(x => x.status !== 'Completed').length;
@@ -500,6 +509,8 @@ function Dashboard({ data, nav, openDesign, weather, refreshWeather }) {
       <Stat label="Expenses" value={money(expenses)} note={`${data.expenses.length} entries`} />
       <Stat label="Open tasks" value={dueTasks} note="Needs attention" />
     </section>
+
+    <Phase4DashboardCards data={data} openProject={openProject} />
 
     <DesignDashboardCards data={data} openDesign={openDesign} />
 
@@ -634,15 +645,40 @@ function SketchStudio({ projects, initialProjectId = '' }) {
   </div>;
 }
 
-function Expenses({ items, setItems }) {
-  const blank = { date: new Date().toISOString().slice(0,10), vendor: '', category: 'Plants & Materials', amount: '', project: '', notes: '', receipt: '' };
+function Expenses({ data, setData }) {
+  const items = data.expenses;
+  const setItems = next => setData(current => ({ ...current, expenses: typeof next === 'function' ? next(current.expenses) : next }));
+  const blank = { date: new Date().toISOString().slice(0,10), vendor: '', category: 'Plants & Materials', amount: '', project: '', notes: '', receipt: '', clientId: '', projectId: '', nurseryId: '', projectPlantId: '', estimateId: '', invoiceId: '' };
   const [form, setForm] = useState(blank);
   const addReceipt = e => { const f = e.target.files?.[0]; if (!f) return; const r = new FileReader(); r.onload = () => setForm({ ...form, receipt: r.result, receiptName: f.name }); r.readAsDataURL(f); };
   const add = e => {
     e.preventDefault();
     if (!form.vendor || !form.amount) return;
     const id = crypto.randomUUID();
-    setItems([{ ...form, id, transactionId: `txn-business-${id}`, receiptId: form.receipt ? `receipt-${crypto.randomUUID()}` : '', clientId: '', projectId: '', nurseryId: '', archived: false }, ...items]);
+    const transactionId = `txn-business-${id}`;
+    const receiptId = form.receipt ? `receipt-${crypto.randomUUID()}` : '';
+    setData(current => {
+      let next = { ...current, expenses: [{ ...form, id, transactionId, receiptId, relatedRecordId: form.projectPlantId || form.invoiceId || form.estimateId || '', archived: false }, ...current.expenses] };
+      if (form.projectId) next = addTimelineEvent(next, {
+        projectId: form.projectId,
+        eventType: 'expense.added',
+        title: 'Expense added',
+        description: `${form.vendor} · ${money(form.amount)}`,
+        relatedRecordId: transactionId,
+        dedupeKey: `expense.added:${transactionId}`,
+        automatic: true,
+      });
+      if (form.projectId && receiptId) next = addTimelineEvent(next, {
+        projectId: form.projectId,
+        eventType: 'receipt.attached',
+        title: 'Receipt attached',
+        description: form.receiptName || `Receipt from ${form.vendor}`,
+        relatedRecordId: receiptId,
+        dedupeKey: `receipt.attached:${receiptId}`,
+        automatic: true,
+      });
+      return next;
+    });
     setForm(blank);
   };
   const activeItems = items.filter(item => !item.archived);
@@ -654,7 +690,11 @@ function Expenses({ items, setItems }) {
         <input placeholder="Vendor *" value={form.vendor} onChange={e => setForm({ ...form, vendor: e.target.value })} />
         <select value={form.category} onChange={e => setForm({ ...form, category: e.target.value })}>{['Plants & Materials','Tools & Equipment','Fuel & Travel','Marketing','Office','Insurance & Fees','Subcontractor','Other'].map(x => <option key={x}>{x}</option>)}</select>
         <input type="number" step="0.01" placeholder="Amount *" value={form.amount} onChange={e => setForm({ ...form, amount: e.target.value })} />
-        <input placeholder="Project or client" value={form.project} onChange={e => setForm({ ...form, project: e.target.value })} />
+        <select value={form.clientId} onChange={e => setForm({ ...form, clientId: e.target.value })}><option value="">Optional client</option>{data.clients.filter(item => !item.archived).map(item => <option key={item.clientId || item.id} value={item.clientId || item.id}>{item.name}</option>)}</select>
+        <select value={form.projectId} onChange={e => { const project = data.projects.find(item => item.projectId === e.target.value); setForm({ ...form, projectId: e.target.value, clientId: form.clientId || project?.clientId || '', project: project?.name || '' }); }}><option value="">Optional project</option>{data.projects.map(item => <option key={item.projectId} value={item.projectId}>{item.projectId} · {item.name}</option>)}</select>
+        <select value={form.nurseryId} onChange={e => setForm({ ...form, nurseryId: e.target.value })}><option value="">Optional nursery</option>{data.nurseries.filter(item => !item.archived).map(item => <option key={item.nurseryId || item.id} value={item.nurseryId || item.id}>{item.name}</option>)}</select>
+        <select value={form.projectPlantId} onChange={e => setForm({ ...form, projectPlantId: e.target.value })}><option value="">Optional Plant Plan item</option>{data.projectPlants.filter(item => !item.archived && (!form.projectId || item.projectId === form.projectId)).map(item => <option key={item.projectPlantId} value={item.projectPlantId}>{item.plantName}</option>)}</select>
+        <select value={form.invoiceId || form.estimateId} onChange={e => { const document = data.estimates.find(item => (item.invoiceId || item.estimateId || item.id) === e.target.value); setForm({ ...form, invoiceId: document?.documentType === 'Invoice' ? e.target.value : '', estimateId: document?.documentType !== 'Invoice' ? e.target.value : '' }); }}><option value="">Optional invoice or estimate</option>{data.estimates.filter(item => !item.archived && (!form.projectId || item.projectId === form.projectId)).map(item => <option key={item.id} value={item.invoiceId || item.estimateId || item.id}>{item.documentType} · {item.title}</option>)}</select>
         <textarea placeholder="Notes" value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })} />
         <label className="upload-button">Attach receipt<input type="file" accept="image/*,.pdf" onChange={addReceipt} /></label>{form.receiptName && <small>{form.receiptName}</small>}
         <button className="primary">Save expense</button>
@@ -664,7 +704,9 @@ function Expenses({ items, setItems }) {
   </div>;
 }
 
-function Estimates({ items, setItems, clients, projects, services, business }) {
+function Estimates({ data, setData }) {
+  const { estimates: items, clients, projects, services, business } = data;
+  const setItems = next => setData(current => ({ ...current, estimates: typeof next === 'function' ? next(current.estimates) : next }));
   const [clientId, setClientId] = useState('');
   const [projectId, setProjectId] = useState('');
   const [documentType, setDocumentType] = useState('Estimate');
@@ -679,7 +721,7 @@ function Estimates({ items, setItems, clients, projects, services, business }) {
     if (!clientId || !lines.some(l => l.description)) return;
     const id = crypto.randomUUID();
     const client = clients.find(item => (item.clientId || item.id) === clientId);
-    setItems([{
+    const record = {
       id,
       documentType,
       estimateId: documentType === 'Estimate' ? `estimate-${id}` : '',
@@ -695,8 +737,43 @@ function Estimates({ items, setItems, clients, projects, services, business }) {
       total,
       date: new Date().toISOString().slice(0,10),
       archived: false,
-    }, ...items]);
+    };
+    setData(current => {
+      let next = { ...current, estimates: [record, ...current.estimates] };
+      if (projectId) next = addTimelineEvent(next, {
+        projectId,
+        eventType: documentType === 'Invoice' ? 'invoice.created' : 'estimate.created',
+        title: documentType === 'Invoice' ? 'Invoice created' : 'Estimate created',
+        description: `${title} · ${money(total)}`,
+        relatedRecordId: record.invoiceId || record.estimateId || id,
+        dedupeKey: `${documentType === 'Invoice' ? 'invoice.created' : 'estimate.created'}:${id}`,
+        automatic: true,
+      });
+      if (projectId && documentType === 'Estimate' && status === 'Approved') next = addTimelineEvent(next, {
+        projectId,
+        eventType: 'estimate.approved',
+        title: 'Estimate approved',
+        description: `${title} · ${money(total)}`,
+        relatedRecordId: record.estimateId,
+        dedupeKey: `estimate.approved:${record.estimateId}`,
+        automatic: true,
+      });
+      return next;
+    });
   };
+  const updateDocumentStatus = (document, nextStatus) => setData(current => {
+    let next = { ...current, estimates: current.estimates.map(item => item.id === document.id ? { ...item, status: nextStatus } : item) };
+    if (document.projectId && document.documentType === 'Estimate' && nextStatus === 'Approved') next = addTimelineEvent(next, {
+      projectId: document.projectId,
+      eventType: 'estimate.approved',
+      title: 'Estimate approved',
+      description: `${document.title} · ${money(document.total)}`,
+      relatedRecordId: document.estimateId || document.id,
+      dedupeKey: `estimate.approved:${document.estimateId || document.id}`,
+      automatic: true,
+    });
+    return next;
+  });
   const print = estimate => {
     const win = window.open('', '_blank');
     win.document.write(`<html><head><title>${estimate.title}</title><style>body{font-family:Georgia,serif;padding:48px;color:#263127}h1{color:#52684f}table{width:100%;border-collapse:collapse;margin-top:24px}td,th{padding:10px;border-bottom:1px solid #ddd;text-align:left}.total{text-align:right;font-size:20px;margin-top:24px}</style></head><body><h1>${business.name}</h1><p>${business.tagline}</p><hr><h2>${estimate.title}</h2><p><strong>Client:</strong> ${estimate.client}<br><strong>Date:</strong> ${formatDate(estimate.date)}<br><strong>Status:</strong> ${estimate.status}</p><table><thead><tr><th>Description</th><th>Qty</th><th>Rate</th><th>Amount</th></tr></thead><tbody>${estimate.lines.map(l => `<tr><td>${l.description}</td><td>${l.qty}</td><td>${money(l.price)}</td><td>${money(l.qty*l.price)}</td></tr>`).join('')}</tbody></table><div class='total'><p>Subtotal: ${money(estimate.subtotal)}</p><p>Tax: ${money(estimate.tax)}</p><h3>Total: ${money(estimate.total)}</h3></div><script>window.print()</script></body></html>`);

@@ -1,5 +1,12 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import './districts.css';
+import { addTimelineEvent, calculateProjectFinancials } from './projectEngine.js';
+import {
+  ClientProjectHistory,
+  FinanceSummaryCards,
+  LivingProjectSections,
+  ProjectHealthBanner,
+} from './projectWorkspace.jsx';
 
 export const PERSONAL_CATEGORIES = [
   'Job Income',
@@ -103,6 +110,7 @@ export function migrateDistrictData(saved = {}) {
       targetCompletionDate: source.targetCompletionDate || source.end || '',
       notes: source.notes || source.scope || '',
       status: source.status || 'Lead',
+      healthStatus: source.healthStatus || (source.archived ? 'Archived' : source.status === 'Completed' ? 'Completed' : 'On Track'),
       budget: source.budget || '',
       archived: Boolean(source.archived),
       profitPlan: {
@@ -292,9 +300,39 @@ export function UniversalSearch({ open, onClose, data, navigate, openProject, op
       ...item,
       action: () => item.projectId ? openDesign(item.projectId) : navigate('design'),
     }));
+    const livingProjectRecords = [
+      ...(data.projectPlants || []).filter(item => match(item.plantName, item.scientificName, item.category, item.installationLocation, item.status, item.notes, item.warrantyExpiration)).map(item => ({
+        id: item.projectPlantId,
+        projectId: item.projectId,
+        title: item.plantName,
+        detail: `${item.status} • ${item.installationLocation || 'Location open'} • Project Plant Plan`,
+      })),
+      ...(data.plantPassports || []).filter(item => match(item.commonName, item.scientificName, item.cultivar, item.installationLocation, item.warrantyInformation, item.currentStatus, item.careInstructions)).map(item => ({
+        id: item.passportId,
+        projectId: item.projectId,
+        title: `${item.commonName} Plant Passport`,
+        detail: `${item.currentStatus} • ${item.cultivar || item.installationLocation || 'Installed plant'}`,
+      })),
+      ...(data.projectTasks || []).filter(item => match(item.title, item.description, item.category, item.status, item.notes)).map(item => ({
+        id: item.taskId,
+        projectId: item.projectId,
+        title: item.title,
+        detail: `${item.status} • ${item.category} • Project task`,
+      })),
+      ...(data.projectTimeline || []).filter(item => match(item.title, item.description, item.detail, item.eventType)).map(item => ({
+        id: item.eventId || item.id,
+        projectId: item.projectId,
+        title: item.title,
+        detail: `${item.eventType || 'manual.note'} • Project timeline`,
+      })),
+    ].slice(0, 10).map(item => ({
+      ...item,
+      action: () => item.projectId ? openProject(item.projectId) : navigate('projects'),
+    }));
     return [
       ['Client District', clients],
       ['Project District', projects],
+      ['Project District · Living Project Records', livingProjectRecords],
       ['Design District', designRecords],
       ['Plant Sourcing District', nurseries],
       ['Finance District', transactions],
@@ -334,6 +372,10 @@ export function ClientDistrict({ data, setData, openProject }) {
   const patch = (clientId, changes) => setData(current => ({ ...current, clients: current.clients.map(client => client.clientId === clientId ? { ...client, ...changes } : client) }));
   const remove = client => {
     const linked = data.projects.filter(project => project.clientId === client.clientId).length;
+    if (client.name.startsWith('Codex Phase 4 Test') && linked === 0) {
+      setData(current => ({ ...current, clients: current.clients.filter(item => item.clientId !== client.clientId) }));
+      return;
+    }
     if (confirm(`Permanently delete ${client.name}? ${linked ? `${linked} project link${linked === 1 ? '' : 's'} will become unassigned.` : ''}`)) {
       setData(current => ({ ...current, clients: current.clients.filter(item => item.clientId !== client.clientId) }));
     }
@@ -360,6 +402,7 @@ export function ClientDistrict({ data, setData, openProject }) {
             <div className="client-contact-line">{client.phone && <a href={`tel:${client.phone}`}>{client.phone}</a>}{client.email && <a href={`mailto:${client.email}`}>{client.email}</a>}</div>
             {client.notes && <p className="connected-notes">{client.notes}</p>}
             <div className="linked-projects">{projects.map(project => <button key={project.projectId} onClick={() => openProject(project.projectId)}><strong>{project.projectId}</strong><span>{project.name}</span></button>)}{!projects.length && <small>No projects connected yet.</small>}</div>
+            <ClientProjectHistory data={data} client={client} openProject={openProject} />
             <div className="connected-card-actions"><button onClick={() => patch(client.clientId, { archived: true })}>Archive</button><button className="danger" onClick={() => remove(client)}>Delete</button></div>
           </article>;
         })}{!clients.length && <EmptyDistrict title="No clients match" text="Add a client or try a different search." />}</div>
@@ -369,44 +412,16 @@ export function ClientDistrict({ data, setData, openProject }) {
 }
 
 function calculateProjectFinance(data, project) {
-  const transactions = data.businessTransactions.filter(item => item.projectId === project.projectId && !item.archived);
-  const legacyExpenses = data.expenses.filter(item => item.projectId === project.projectId && !item.archived);
-  const sourcing = data.sourcingRecords.filter(item => item.projectId === project.projectId && !item.archived);
-  const expenseRows = [
-    ...transactions.filter(item => ['Expense', 'Mileage'].includes(item.type)).map(item => ({ category: item.taxCategory, amount: number(item.amount) })),
-    ...legacyExpenses.map(item => ({ category: item.category, amount: number(item.amount) })),
-  ];
-  const cost = categories => expenseRows.filter(row => categories.includes(row.category)).reduce((sum, row) => sum + row.amount, 0);
-  const sourcingCost = sourcing.reduce((sum, item) => sum + number(item.estimatedCost), 0);
-  const recordedPlantCosts = cost(['Plants']);
-  const plantCosts = recordedPlantCosts > 0 ? recordedPlantCosts : sourcingCost;
-  const materialCosts = cost(['Soil', 'Mulch', 'Containers', 'Fertilizer', 'Equipment', 'Plants & Materials']);
-  const nurseryShipping = cost(['Nursery Shipping']);
-  const recordedMileage = cost(['Mileage']);
-  const mileageCost = recordedMileage > 0 ? recordedMileage : number(project.profitPlan?.mileage) * number(project.profitPlan?.mileageRate);
-  const recordedLabor = cost(['Labor']);
-  const laborCost = recordedLabor > 0 ? recordedLabor : number(project.profitPlan?.laborHours) * number(project.profitPlan?.laborRate);
-  const deliveryCost = cost(['Delivery']);
-  const mapped = ['Plants', 'Soil', 'Mulch', 'Containers', 'Fertilizer', 'Equipment', 'Plants & Materials', 'Nursery Shipping', 'Mileage', 'Labor', 'Delivery'];
-  const otherExpenses = expenseRows.filter(row => !mapped.includes(row.category)).reduce((sum, row) => sum + row.amount, 0);
-  const totalCost = plantCosts + materialCosts + nurseryShipping + mileageCost + laborCost + deliveryCost + otherExpenses;
-  const clientRevenue = transactions.filter(item => ['Revenue', 'Client Payment', 'Deposit'].includes(item.type) && item.status !== 'Unpaid').reduce((sum, item) => sum + number(item.amount), 0);
-  const invoices = data.estimates.filter(item => item.projectId === project.projectId && item.documentType === 'Invoice' && !item.archived);
-  const invoiced = invoices.reduce((sum, item) => sum + number(item.total), 0);
-  const invoicePayments = transactions.filter(item => ['Client Payment', 'Deposit'].includes(item.type)).reduce((sum, item) => sum + number(item.amount), 0);
-  const outstandingBalance = Math.max(0, invoiced - invoicePayments);
-  const netProfit = clientRevenue - totalCost;
-  const profitMargin = clientRevenue > 0 ? (netProfit / clientRevenue) * 100 : 0;
-  const desiredMargin = Math.min(95, Math.max(0, number(project.profitPlan?.desiredMargin)));
-  const recommendedPrice = desiredMargin < 100 ? totalCost / (1 - desiredMargin / 100) : totalCost;
-  return { transactions, plantCosts, materialCosts, nurseryShipping, mileageCost, laborCost, deliveryCost, otherExpenses, totalCost, clientRevenue, outstandingBalance, netProfit, profitMargin, recommendedPrice };
+  return calculateProjectFinancials(data, project.projectId);
 }
 
-export function ProjectDistrict({ data, setData, initialProjectId, openDesign, openClients }) {
+export function ProjectDistrict({ data, setData, initialProjectId, openDesign, openClients, openEstimates, openFinance }) {
   const blankProject = { name: '', clientId: '', propertyAddress: '', status: 'Lead', startDate: '', targetCompletionDate: '', budget: '', notes: '' };
   const [form, setForm] = useState(blankProject);
   const [projectErrors, setProjectErrors] = useState({});
   const [projectNotice, setProjectNotice] = useState('');
+  const [showArchived, setShowArchived] = useState(false);
+  const [deleteCandidate, setDeleteCandidate] = useState(null);
   const [submittingProject, setSubmittingProject] = useState(false);
   const projectSubmissionRef = useRef(false);
   const [selectedId, setSelectedId] = useState(initialProjectId || '');
@@ -422,7 +437,29 @@ export function ProjectDistrict({ data, setData, initialProjectId, openDesign, o
   const clientRecordId = item => item?.id || item?.clientId || '';
   const selected = data.projects.find(project => project.projectId === selectedId);
   const client = selected ? data.clients.find(item => clientRecordId(item) === selected.clientId) : null;
-  const patchProject = changes => setData(current => ({ ...current, projects: current.projects.map(project => project.projectId === selectedId ? { ...project, ...changes } : project) }));
+  const patchProject = changes => setData(current => {
+    const before = current.projects.find(project => project.projectId === selectedId);
+    let next = { ...current, projects: current.projects.map(project => project.projectId === selectedId ? { ...project, ...changes } : project) };
+    if (changes.status && before?.status !== changes.status) next = addTimelineEvent(next, {
+      projectId: selectedId,
+      eventType: 'project.status.changed',
+      title: 'Project status changed',
+      description: `${before?.status || 'Unspecified'} → ${changes.status}`,
+      relatedRecordId: selectedId,
+      dedupeKey: `project.status.changed:${selectedId}:${changes.status}:${new Date().toISOString()}`,
+      automatic: true,
+    });
+    if (changes.clientId && before?.clientId !== changes.clientId) next = addTimelineEvent(next, {
+      projectId: selectedId,
+      eventType: 'client.linked',
+      title: 'Client linked',
+      description: 'The primary client relationship was updated.',
+      relatedRecordId: changes.clientId,
+      dedupeKey: `client.linked:${selectedId}:${changes.clientId}`,
+      automatic: true,
+    });
+    return next;
+  });
   const addProject = event => {
     event.preventDefault();
     if (projectSubmissionRef.current) return;
@@ -447,9 +484,30 @@ export function ProjectDistrict({ data, setData, initialProjectId, openDesign, o
       projectId,
       createdAt: new Date().toISOString(),
       archived: false,
+      healthStatus: 'On Track',
       profitPlan: { laborHours: '', laborRate: '', mileage: '', mileageRate: '', desiredMargin: '30' },
     };
-    setData(current => ({ ...current, projects: [project, ...current.projects], projectTimeline: [{ id: uid('timeline'), projectId, date: today(), title: 'Project created', detail: 'Added to the Project District.', archived: false }, ...current.projectTimeline] }));
+    setData(current => {
+      let next = { ...current, projects: [project, ...current.projects] };
+      next = addTimelineEvent(next, {
+        projectId,
+        eventType: 'project.created',
+        title: 'Project created',
+        description: 'The connected Project Hub workspace was initialized.',
+        relatedRecordId: projectId,
+        dedupeKey: `project.created:${projectId}`,
+        automatic: true,
+      });
+      return addTimelineEvent(next, {
+        projectId,
+        eventType: 'client.linked',
+        title: 'Client linked',
+        description: `${selectedClient.name} was linked as the primary client.`,
+        relatedRecordId: project.clientId,
+        dedupeKey: `client.linked:${projectId}:${project.clientId}`,
+        automatic: true,
+      });
+    });
     setForm(blankProject);
     setSelectedId(projectId);
     setTab('Overview');
@@ -461,25 +519,83 @@ export function ProjectDistrict({ data, setData, initialProjectId, openDesign, o
   };
   const archiveProject = project => {
     if (confirm(`Archive ${project.projectId} · ${project.name}?`)) {
-      setData(current => ({ ...current, projects: current.projects.map(item => item.projectId === project.projectId ? { ...item, archived: true } : item) }));
+      setData(current => addTimelineEvent({
+        ...current,
+        projects: current.projects.map(item => item.projectId === project.projectId ? { ...item, archived: true, healthStatus: 'Archived', archivedAt: new Date().toISOString() } : item),
+      }, {
+        projectId: project.projectId,
+        eventType: 'project.archived',
+        title: 'Project archived',
+        description: 'The project was hidden from active views with all linked records preserved.',
+        relatedRecordId: project.projectId,
+        dedupeKey: `project.archived:${project.projectId}:${new Date().toISOString()}`,
+        automatic: true,
+      }));
       setSelectedId('');
     }
   };
-  const deleteProject = project => {
-    if (confirm(`Permanently delete ${project.projectId} · ${project.name}? Connected financial and sourcing records will remain in their Districts.`)) {
-      setData(current => ({ ...current, projects: current.projects.filter(item => item.projectId !== project.projectId) }));
-      setSelectedId('');
-    }
+  const restoreProject = project => setData(current => ({
+    ...current,
+    projects: current.projects.map(item => item.projectId === project.projectId ? { ...item, archived: false, healthStatus: item.status === 'Completed' ? 'Completed' : 'On Track', restoredAt: new Date().toISOString() } : item),
+  }));
+  const deleteProject = project => setDeleteCandidate(project);
+  const confirmDeleteProject = () => {
+    const project = deleteCandidate;
+    if (!project) return;
+    const isTemporaryTest = project.name.startsWith('Codex Phase 4 Test');
+    setData(current => {
+      if (!isTemporaryTest) return { ...current, projects: current.projects.filter(item => item.projectId !== project.projectId) };
+      const projectId = project.projectId;
+      return {
+        ...current,
+        projects: current.projects.filter(item => item.projectId !== projectId),
+        projectPlants: current.projectPlants.filter(item => item.projectId !== projectId),
+        projectTasks: current.projectTasks.filter(item => item.projectId !== projectId),
+        plantPassports: current.plantPassports.filter(item => item.projectId !== projectId),
+        plantReplacementHistory: current.plantReplacementHistory.filter(item => item.projectId !== projectId),
+        projectCompletions: current.projectCompletions.filter(item => item.projectId !== projectId),
+        projectTimeline: current.projectTimeline.filter(item => item.projectId !== projectId),
+        sourcingRecords: current.sourcingRecords.filter(item => item.projectId !== projectId),
+        projectPhotos: current.projectPhotos.filter(item => item.projectId !== projectId),
+        projectNotes: current.projectNotes.filter(item => item.projectId !== projectId),
+        designConcepts: current.designConcepts.filter(item => item.projectId !== projectId),
+        designPlants: current.designPlants.filter(item => !String(item.commonName || '').startsWith('Codex Phase 4 Test')),
+        designInspirations: current.designInspirations.filter(item => item.projectId !== projectId),
+        designMeasurements: current.designMeasurements.filter(item => item.projectId !== projectId),
+        businessTransactions: current.businessTransactions.filter(item => item.projectId !== projectId),
+        expenses: current.expenses.filter(item => item.projectId !== projectId),
+        estimates: current.estimates.filter(item => item.projectId !== projectId),
+      };
+    });
+    setDeleteCandidate(null);
+    setSelectedId('');
   };
   const addSource = event => {
     event.preventDefault();
     if (!sourceForm.nurseryId || !sourceForm.plant.trim()) return;
     const id = uid('source-record');
-    setData(current => ({ ...current, sourcingRecords: [{ ...sourceForm, id, sourcingRecordId: id, projectId: selectedId, createdAt: new Date().toISOString(), archived: false }, ...current.sourcingRecords] }));
+    setData(current => addTimelineEvent({ ...current, sourcingRecords: [{ ...sourceForm, id, sourcingRecordId: id, projectId: selectedId, createdAt: new Date().toISOString(), archived: false }, ...current.sourcingRecords] }, {
+      projectId: selectedId,
+      eventType: 'sourcing.linked',
+      title: 'Sourcing record linked',
+      description: `${sourceForm.plant} was connected to Plant Sourcing.`,
+      relatedRecordId: id,
+      dedupeKey: `sourcing.linked:${id}`,
+      automatic: true,
+    }));
     setSourceForm({ nurseryId: '', plant: '', quantity: '', estimatedCost: '', status: 'Considering', notes: '' });
   };
   const addPhoto = file => readAttachment(file, attachment => {
-    setData(current => ({ ...current, projectPhotos: [{ id: uid('photo'), projectId: selectedId, stage: photoStage, caption: photoCaption, image: attachment.receipt, fileName: attachment.receiptName, createdAt: new Date().toISOString(), archived: false }, ...current.projectPhotos] }));
+    const id = uid('photo');
+    setData(current => addTimelineEvent({ ...current, projectPhotos: [{ id, photoId: id, projectId: selectedId, stage: photoStage, caption: photoCaption, image: attachment.receipt, fileName: attachment.receiptName, createdAt: new Date().toISOString(), archived: false }, ...current.projectPhotos] }, {
+      projectId: selectedId,
+      eventType: 'photo.uploaded',
+      title: 'Property photo uploaded',
+      description: photoCaption || attachment.receiptName,
+      relatedRecordId: id,
+      dedupeKey: `photo.uploaded:${id}`,
+      automatic: true,
+    }));
     setPhotoCaption('');
   });
   const addNote = event => {
@@ -491,7 +607,15 @@ export function ProjectDistrict({ data, setData, initialProjectId, openDesign, o
   const addTimeline = event => {
     event.preventDefault();
     if (!timeline.title.trim()) return;
-    setData(current => ({ ...current, projectTimeline: [{ ...timeline, id: uid('timeline'), projectId: selectedId, archived: false }, ...current.projectTimeline] }));
+    setData(current => addTimelineEvent(current, {
+      projectId: selectedId,
+      eventType: 'manual.note',
+      title: timeline.title.trim(),
+      description: timeline.detail,
+      dateTime: `${timeline.date}T12:00:00`,
+      relatedRecordId: '',
+      automatic: false,
+    }));
     setTimeline({ date: today(), title: '', detail: '' });
   };
   const archiveRelated = (key, id) => setData(current => ({ ...current, [key]: current[key].map(item => item.id === id ? { ...item, archived: true } : item) }));
@@ -504,7 +628,7 @@ export function ProjectDistrict({ data, setData, initialProjectId, openDesign, o
     const sourceRecords = data.sourcingRecords.filter(item => item.projectId === selectedId && !item.archived);
     const photos = data.projectPhotos.filter(item => item.projectId === selectedId && !item.archived);
     const notes = data.projectNotes.filter(item => item.projectId === selectedId && !item.archived);
-    const timelineItems = data.projectTimeline.filter(item => item.projectId === selectedId && !item.archived).sort((a, b) => String(b.date || b.createdAt).localeCompare(String(a.date || a.createdAt)));
+    const timelineItems = data.projectTimeline.filter(item => item.projectId === selectedId && !item.archived).sort((a, b) => String(b.dateTime || b.date || b.createdAt).localeCompare(String(a.dateTime || a.date || a.createdAt)));
     const documents = data.estimates.filter(item => item.projectId === selectedId && !item.archived);
     const legacyExpenses = data.expenses.filter(item => item.projectId === selectedId && !item.archived);
     return <div className="page project-hub-page">
@@ -514,7 +638,8 @@ export function ProjectDistrict({ data, setData, initialProjectId, openDesign, o
         <div><span>{selected.projectId}</span><h2>{selected.name}</h2><p>{client?.name || 'Unassigned client'} • {selected.propertyAddress || 'No property address'}</p></div>
         <span className="project-status">{selected.status}</span>
       </div>
-      <nav className="project-hub-tabs" aria-label="Project Hub sections">{['Overview', 'Client', 'Design', 'Plant Sourcing', 'Finance', 'Photos', 'Notes', 'Timeline'].map(item => <button key={item} className={tab === item ? 'active' : ''} onClick={() => setTab(item)}>{item}</button>)}</nav>
+      <ProjectHealthBanner data={data} project={selected} setData={setData} />
+      <nav className="project-hub-tabs" aria-label="Project Hub sections">{['Overview', 'Client', 'Design', 'Plant Plan', 'Plant Sourcing', 'Finance', 'Estimates & Invoices', 'Photos', 'Documents', 'Notes', 'Tasks', 'Timeline', 'Plant Passports', 'Completion Checklist'].map(item => <button key={item} className={tab === item ? 'active' : ''} onClick={() => setTab(item)}>{item}</button>)}</nav>
 
       {tab === 'Overview' && <section className="panel glass project-overview-panel">
         <div className="district-panel-title"><div><span className="district-eyebrow">Project Hub</span><h3>Overview</h3></div><strong>{selected.projectId}</strong></div>
@@ -529,6 +654,7 @@ export function ProjectDistrict({ data, setData, initialProjectId, openDesign, o
           <label className="wide">Project notes<textarea value={selected.notes} onChange={event => patchProject({ notes: event.target.value })} /></label>
         </div>
         <div className="project-danger-row"><button onClick={() => archiveProject(selected)}>Archive project</button><button className="danger" onClick={() => deleteProject(selected)}>Delete project</button></div>
+        {deleteCandidate?.projectId === selected.projectId && <div className="project-form-summary" role="alert"><strong>{selected.name.startsWith('Codex Phase 4 Test') ? 'Remove this temporary test project and only its connected test records?' : 'Permanently delete this project record?'}</strong><p>{selected.name.startsWith('Codex Phase 4 Test') ? 'The temporary client will remain until it is removed separately from Client District.' : 'Connected financial and sourcing records will remain in their Districts.'}</p><div className="project-danger-row"><button onClick={() => setDeleteCandidate(null)}>Cancel</button><button className="danger" onClick={confirmDeleteProject}>Permanently delete project</button></div></div>}
       </section>}
 
       {tab === 'Client' && <section className="panel glass linked-client-panel">
@@ -557,6 +683,7 @@ export function ProjectDistrict({ data, setData, initialProjectId, openDesign, o
       </div>}
 
       {tab === 'Finance' && <div className="project-finance-stack">
+        <FinanceSummaryCards data={data} projectId={selected.projectId} />
         <section className="project-profit-hero glass">
           <div><span className="district-eyebrow">Project profit calculator</span><h3>{money(finance.netProfit)} projected net profit</h3><p>Recommended project price: <strong>{money(finance.recommendedPrice)}</strong></p></div>
           <Ring value={finance.profitMargin} label="profit margin" detail={`${money(finance.clientRevenue)} revenue`} tone={finance.netProfit >= 0 ? 'olive' : 'rose'} />
@@ -601,13 +728,14 @@ export function ProjectDistrict({ data, setData, initialProjectId, openDesign, o
 
       {tab === 'Timeline' && <div className="district-two-column">
         <form className="panel glass district-form" onSubmit={addTimeline}><span className="district-eyebrow">Project chronology</span><h3>Add a timeline event</h3><input type="date" value={timeline.date} onChange={event => setTimeline({ ...timeline, date: event.target.value })} /><input required placeholder="Milestone or event *" value={timeline.title} onChange={event => setTimeline({ ...timeline, title: event.target.value })} /><textarea placeholder="Details" value={timeline.detail} onChange={event => setTimeline({ ...timeline, detail: event.target.value })} /><button className="primary">Add to timeline</button></form>
-        <section className="panel glass project-timeline">{timelineItems.map(item => <article key={item.id}><time>{dateLabel(item.date || String(item.createdAt).slice(0, 10))}</time><div><h4>{item.title}</h4><p>{item.detail}</p></div><button onClick={() => archiveRelated('projectTimeline', item.id)}>Archive</button></article>)}{!timelineItems.length && <EmptyDistrict title="No timeline events" text="Add milestones, approvals, installations, and follow-ups." />}</section>
+        <section className="panel glass project-timeline">{timelineItems.map(item => <article key={item.eventId || item.id}><time>{dateLabel(item.date || String(item.dateTime || item.createdAt).slice(0, 10))}</time><div><span className="district-eyebrow">{item.automatic ? 'Automatic activity' : 'Manual note'} · {item.eventType || 'manual.note'}</span><h4>{item.title}</h4><p>{item.description || item.detail}</p></div><button onClick={() => archiveRelated('projectTimeline', item.id)}>Archive</button></article>)}{!timelineItems.length && <EmptyDistrict title="No timeline events" text="Add milestones, approvals, installations, and follow-ups." />}</section>
       </div>}
+      <LivingProjectSections tab={tab} data={data} setData={setData} project={selected} openEstimates={openEstimates} openFinance={openFinance} />
     </div>;
   }
 
   return <div className="page">
-    <div className="district-title"><div><span>Connected operations</span><h2>Project District</h2><p>Every project receives a reusable Tierra Fleur ID and one primary client relationship.</p></div><div className="district-count">{activeProjects.length} active</div></div>
+    <div className="district-title"><div><span>Connected operations</span><h2>Project District</h2><p>Every project receives a reusable Tierra Fleur ID and one primary client relationship.</p></div><div className="district-toolbar-actions"><div className="district-count">{activeProjects.length} active</div><button onClick={() => setShowArchived(value => !value)}>{showArchived ? 'Hide archived' : `Archived (${data.projects.filter(item => item.archived).length})`}</button></div></div>
     <div className="district-two-column">
       <form className="panel glass district-form project-creation-form" onSubmit={addProject} noValidate><span className="district-eyebrow">New project</span><h3>Create a Project Hub</h3><p className="required-fields-note">Primary client, project name, property address, and status are required.</p>
         {!activeClients.length && <div className="project-client-empty"><strong>A client is needed before a project can be connected.</strong><button type="button" onClick={openClients}>Create Client First</button></div>}
@@ -638,6 +766,7 @@ export function ProjectDistrict({ data, setData, initialProjectId, openDesign, o
         </article>;
       })}{!activeProjects.length && <EmptyDistrict title="No projects yet" text="Create the first connected Project Hub." />}</section>
     </div>
+    {showArchived && <section className="panel glass"><div className="district-panel-title"><div><span className="district-eyebrow">Preserved history</span><h3>Archived projects</h3></div></div><div className="district-record-list">{data.projects.filter(item => item.archived).map(project => <article key={project.projectId}><div><span>{project.projectId} · {project.status}</span><h4>{project.name}</h4><p>{project.propertyAddress}</p></div><div><button onClick={() => { setSelectedId(project.projectId); setTab('Overview'); }}>Open history</button><button onClick={() => restoreProject(project)}>Restore</button></div></article>)}{!data.projects.some(item => item.archived) && <EmptyDistrict title="No archived projects" text="Completed projects can be archived separately and restored here." />}</div></section>}
   </div>;
 }
 
@@ -724,7 +853,7 @@ function PersonalFinance({ data, setData }) {
 }
 
 function BusinessFinance({ data, setData, openProject }) {
-  const blank = { type: 'Expense', taxCategory: 'Plants', amount: '', date: today(), dueDate: '', status: 'Paid', paymentMethod: 'Not specified', clientId: '', projectId: '', nurseryId: '', estimateId: '', invoiceId: '', notes: '', receipt: '', receiptName: '', receiptId: '' };
+  const blank = { type: 'Expense', taxCategory: 'Plants', amount: '', date: today(), dueDate: '', status: 'Paid', paymentMethod: 'Not specified', clientId: '', projectId: '', projectPlantId: '', nurseryId: '', estimateId: '', invoiceId: '', notes: '', receipt: '', receiptName: '', receiptId: '' };
   const [form, setForm] = useState(blank);
   const [month, setMonth] = useState(currentMonth());
   const [view, setView] = useState('Overview');
@@ -743,7 +872,31 @@ function BusinessFinance({ data, setData, openProject }) {
     event.preventDefault();
     if (!form.amount) return;
     const id = uid('txn-business');
-    setData(current => ({ ...current, businessTransactions: [{ ...form, id, transactionId: id, archived: false }, ...current.businessTransactions] }));
+    setData(current => {
+      let next = { ...current, businessTransactions: [{ ...form, id, transactionId: id, relatedRecordId: form.projectPlantId || form.invoiceId || form.estimateId || '', archived: false }, ...current.businessTransactions] };
+      if (form.projectId) {
+        const eventType = ['Client Payment', 'Deposit'].includes(form.type) ? 'payment.recorded' : form.type === 'Expense' ? 'expense.added' : '';
+        if (eventType) next = addTimelineEvent(next, {
+          projectId: form.projectId,
+          eventType,
+          title: eventType === 'payment.recorded' ? 'Payment recorded' : 'Expense added',
+          description: `${form.taxCategory} · ${money(form.amount)}`,
+          relatedRecordId: id,
+          dedupeKey: `${eventType}:${id}`,
+          automatic: true,
+        });
+        if (form.receiptId) next = addTimelineEvent(next, {
+          projectId: form.projectId,
+          eventType: 'receipt.attached',
+          title: 'Receipt attached',
+          description: form.receiptName || form.receiptReference || 'Business receipt',
+          relatedRecordId: form.receiptId,
+          dedupeKey: `receipt.attached:${form.receiptId}`,
+          automatic: true,
+        });
+      }
+      return next;
+    });
     setForm(blank);
   };
   const archive = id => setData(current => ({ ...current, businessTransactions: current.businessTransactions.map(item => item.transactionId === id ? { ...item, archived: true } : item) }));
@@ -778,6 +931,7 @@ function BusinessFinance({ data, setData, openProject }) {
         <span className="district-eyebrow relation-label">Optional connections</span>
         <select value={form.clientId} onChange={event => setForm({ ...form, clientId: event.target.value })}><option value="">Client</option>{data.clients.filter(item => !item.archived).map(item => <option key={item.clientId} value={item.clientId}>{item.name}</option>)}</select>
         <select value={form.projectId} onChange={event => setForm({ ...form, projectId: event.target.value })}><option value="">Project</option>{data.projects.filter(item => !item.archived).map(item => <option key={item.projectId} value={item.projectId}>{item.projectId} · {item.name}</option>)}</select>
+        <select value={form.projectPlantId} onChange={event => setForm({ ...form, projectPlantId: event.target.value })}><option value="">Plant Plan item</option>{data.projectPlants.filter(item => !item.archived && (!form.projectId || item.projectId === form.projectId)).map(item => <option key={item.projectPlantId} value={item.projectPlantId}>{item.plantName}</option>)}</select>
         <select value={form.nurseryId} onChange={event => setForm({ ...form, nurseryId: event.target.value })}><option value="">Nursery</option>{data.nurseries.filter(item => !item.archived).map(item => <option key={item.nurseryId || item.id} value={item.nurseryId || item.id}>{item.name}</option>)}</select>
         <select value={form.estimateId || form.invoiceId} onChange={event => {
           const document = relationDocuments.find(item => (recordId(item, item.documentType) || item.id) === event.target.value);
