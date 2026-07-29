@@ -21,6 +21,14 @@ import {
   migrateProjectEngineData,
 } from './projectEngine.js';
 import { Phase4DashboardCards } from './projectWorkspace.jsx';
+import {
+  createPresentationStarter,
+  migratePresentationData,
+} from './presentationEngine.js';
+import {
+  Phase5DashboardCards,
+  PresentationMode,
+} from './presentationWorkspace.jsx';
 
 const STORAGE_KEY = 'tierraFleurCommandCenterV1';
 
@@ -287,6 +295,7 @@ const starter = {
     tagline: 'Luxury edible landscape design for real-life spaces.',
     email: '',
     phone: '',
+    website: '',
     address: '',
     defaultTax: 0,
   },
@@ -308,6 +317,7 @@ const starter = {
   ...createDistrictStarter(),
   ...createDesignStarter(),
   ...createProjectEngineStarter(),
+  ...createPresentationStarter(),
   notes: '',
   learning: { history: [], completed: [], preferences: { level: 'Growing', focus: 'Business + Design' } },
 };
@@ -326,12 +336,29 @@ function normalizeData(saved = {}) {
   const districtData = migrateDistrictData(saved);
   const designData = migrateDesignData(saved);
   const projectEngineData = migrateProjectEngineData(saved, { projects: districtData.projects, clients: districtData.clients });
+  const presentationData = migratePresentationData({
+    ...saved,
+    ...districtData,
+    ...designData,
+    ...projectEngineData,
+  }, {
+    projects: districtData.projects,
+    clients: districtData.clients,
+    projectPhotos: designData.projectPhotos,
+    designConcepts: designData.designConcepts,
+    projectPlants: projectEngineData.projectPlants,
+    designMaterials: designData.designMaterials,
+    projectTimeline: projectEngineData.projectTimeline,
+    plantPassports: projectEngineData.plantPassports,
+    estimates: districtData.estimates,
+  });
   return {
     ...starter,
     ...saved,
     ...districtData,
     ...designData,
     ...projectEngineData,
+    ...presentationData,
     nurseries: migratedNurseries,
     plantSourcingVersion: 1,
   };
@@ -364,6 +391,7 @@ function App() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [focusedProjectId, setFocusedProjectId] = useState('');
+  const [presentationRequest, setPresentationRequest] = useState(null);
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
@@ -384,6 +412,10 @@ function App() {
   const openProject = projectId => { setFocusedProjectId(projectId); nav('projects', { keepProject: true }); };
   const openDesign = projectId => { setFocusedProjectId(projectId); nav('design', { keepProject: true }); };
   const openSketch = projectId => { setFocusedProjectId(projectId); nav('sketch', { keepProject: true }); };
+  const openPresentation = request => {
+    setFocusedProjectId(request.projectId);
+    setPresentationRequest(request);
+  };
 
   const refreshWeather = () => {
     setWeather({ status: 'Loading…', temp: null, detail: 'Finding your location' });
@@ -404,6 +436,8 @@ function App() {
       }
     }, () => setWeather({ status: 'Location blocked', temp: null, detail: 'Allow location access in Safari settings' }), { enableHighAccuracy: false, timeout: 10000 });
   };
+
+  if (presentationRequest) return <PresentationMode data={data} setData={setData} request={presentationRequest} onExit={() => setPresentationRequest(null)} />;
 
   return (
     <div className="app-shell">
@@ -460,7 +494,7 @@ function App() {
       <main className="main-content">
         {view === 'dashboard' && <Dashboard data={data} nav={nav} openProject={openProject} openDesign={openDesign} weather={weather} refreshWeather={refreshWeather} />}
         {view === 'clients' && <ClientDistrict data={data} setData={setData} openProject={openProject} />}
-        {view === 'projects' && <ProjectDistrict data={data} setData={setData} initialProjectId={focusedProjectId} openDesign={openDesign} openClients={() => nav('clients')} openEstimates={() => nav('estimates')} openFinance={() => nav('finance')} />}
+        {view === 'projects' && <ProjectDistrict data={data} setData={setData} initialProjectId={focusedProjectId} openDesign={openDesign} openClients={() => nav('clients')} openEstimates={() => nav('estimates')} openFinance={() => nav('finance')} openPresentation={openPresentation} />}
         {view === 'design' && <DesignDistrict data={data} setData={setData} initialProjectId={focusedProjectId} openProject={openProject} openProjectDistrict={() => nav('projects')} openSketch={openSketch} />}
         {view === 'sketch' && <SketchStudio projects={data.projects} initialProjectId={focusedProjectId} />}
         {view === 'finance' && <FinanceDistrict data={data} setData={setData} openProject={openProject} />}
@@ -511,6 +545,8 @@ function Dashboard({ data, nav, openProject, openDesign, weather, refreshWeather
     </section>
 
     <Phase4DashboardCards data={data} openProject={openProject} />
+
+    <Phase5DashboardCards data={data} openProject={openProject} />
 
     <DesignDashboardCards data={data} openDesign={openDesign} />
 
@@ -1264,7 +1300,7 @@ function Settings({ data, setData }) {
   const exportData = () => { const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }); const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'tierra-fleur-backup.json'; a.click(); URL.revokeObjectURL(a.href); };
   const importData = e => { const file = e.target.files?.[0]; if (!file) return; const r = new FileReader(); r.onload = () => { try { setData(normalizeData(JSON.parse(r.result))); } catch { alert('That backup file could not be read.'); } }; r.readAsText(file); };
   return <div className="page"><SectionTitle eyebrow="Administration" title="Business Settings" text="Personalize documents and keep a portable backup of your business records." />
-    <div className="two-column"><div className="panel glass form-grid"><h3>Business profile</h3><input value={b.name} onChange={e => setB({ name: e.target.value })} /><input value={b.tagline} onChange={e => setB({ tagline: e.target.value })} /><input placeholder="Business email" value={b.email} onChange={e => setB({ email: e.target.value })} /><input placeholder="Business phone" value={b.phone} onChange={e => setB({ phone: e.target.value })} /><input placeholder="Mailing address" value={b.address} onChange={e => setB({ address: e.target.value })} /><label>Default tax rate %<input type="number" step="0.01" value={b.defaultTax} onChange={e => setB({ defaultTax: e.target.value })} /></label></div>
+    <div className="two-column"><div className="panel glass form-grid"><h3>Business profile</h3><input value={b.name} onChange={e => setB({ name: e.target.value })} /><input value={b.tagline} onChange={e => setB({ tagline: e.target.value })} /><input placeholder="Business email" value={b.email} onChange={e => setB({ email: e.target.value })} /><input placeholder="Business phone" value={b.phone} onChange={e => setB({ phone: e.target.value })} /><input placeholder="Business website" value={b.website || ''} onChange={e => setB({ website: e.target.value })} /><input placeholder="Mailing address" value={b.address} onChange={e => setB({ address: e.target.value })} /><label>Default tax rate %<input type="number" step="0.01" value={b.defaultTax} onChange={e => setB({ defaultTax: e.target.value })} /></label></div>
       <div className="panel glass form-grid"><h3>Data backup</h3><p>Export regularly, especially before major code updates or moving the app to a new device.</p><button className="primary" onClick={exportData}>Export business backup</button><label className="upload-button">Import backup<input type="file" accept="application/json" onChange={importData} /></label><button className="danger" onClick={() => { if (confirm('Erase all Tierra Fleur app data on this device?')) { localStorage.removeItem(STORAGE_KEY); location.reload(); } }}>Erase local data</button></div>
     </div>
   </div>;

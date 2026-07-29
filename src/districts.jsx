@@ -7,6 +7,12 @@ import {
   LivingProjectSections,
   ProjectHealthBanner,
 } from './projectWorkspace.jsx';
+import {
+  PRESENTATION_THEMES,
+  createPresentationSections,
+  createPresentationSettings,
+} from './presentationEngine.js';
+import { PresentationBuilder } from './presentationWorkspace.jsx';
 
 export const PERSONAL_CATEGORIES = [
   'Job Income',
@@ -329,10 +335,58 @@ export function UniversalSearch({ open, onClose, data, navigate, openProject, op
       ...item,
       action: () => item.projectId ? openProject(item.projectId) : navigate('projects'),
     }));
+    const presentationRecords = [
+      ...(data.presentationSettings || []).filter(item => match(item.title, item.subtitle, item.welcomeMessage, item.propertyName, item.projectScope, item.maintenancePlan, item.warrantyInformation, item.nextSteps)).map(item => ({
+        id: item.presentationId,
+        projectId: item.projectId,
+        title: item.title,
+        detail: 'Client proposal presentation',
+      })),
+      ...(data.presentationSections || []).filter(item => match(item.presentationTitle, item.defaultTitle, item.introduction)).map(item => ({
+        id: item.sectionId,
+        projectId: item.projectId,
+        title: item.presentationTitle,
+        detail: 'Presentation section',
+      })),
+      ...(data.presentationSessions || []).filter(item => match(item.attendees, item.purpose, item.outcome, item.notes)).map(item => ({
+        id: item.sessionId,
+        projectId: item.projectId,
+        title: item.purpose || 'Presentation session',
+        detail: `${item.attendees || 'Attendees open'} • Presentation session`,
+      })),
+      ...(data.approvalRecords || []).filter(item => match(item.status, item.decisionMaker, item.comments)).map(item => ({
+        id: item.approvalId,
+        projectId: item.projectId,
+        title: item.status,
+        detail: 'Presentation approval',
+      })),
+      ...(data.addOnInterestRecords || []).filter(item => match(item.title, item.description, item.status)).map(item => ({
+        id: item.addOnInterestId,
+        projectId: item.projectId,
+        title: item.title,
+        detail: `${item.status} • Optional add-on`,
+      })),
+      ...(data.seasonalInterestEntries || []).filter(item => match(item.title, item.details, item.season, item.month, item.interestType)).map(item => ({
+        id: item.seasonalInterestId,
+        projectId: item.projectId,
+        title: item.title,
+        detail: `${item.month || item.season} • ${item.interestType}`,
+      })),
+      ...(data.projectPlants || []).filter(item => match(item.careInstructions, item.reasonSelected, item.bloomSeason, item.harvestSeason, item.wildlifeBenefit, item.edibleBenefit)).map(item => ({
+        id: `care-${item.projectPlantId}`,
+        projectId: item.projectId,
+        title: `${item.plantName} care guide`,
+        detail: item.careInstructions || item.reasonSelected || 'Plant presentation details',
+      })),
+    ].slice(0, 12).map(item => ({
+      ...item,
+      action: () => item.projectId ? openProject(item.projectId) : navigate('projects'),
+    }));
     return [
       ['Client District', clients],
       ['Project District', projects],
       ['Project District · Living Project Records', livingProjectRecords],
+      ['Project District · Client Presentations', presentationRecords],
       ['Design District', designRecords],
       ['Plant Sourcing District', nurseries],
       ['Finance District', transactions],
@@ -372,7 +426,7 @@ export function ClientDistrict({ data, setData, openProject }) {
   const patch = (clientId, changes) => setData(current => ({ ...current, clients: current.clients.map(client => client.clientId === clientId ? { ...client, ...changes } : client) }));
   const remove = client => {
     const linked = data.projects.filter(project => project.clientId === client.clientId).length;
-    if (client.name.startsWith('Codex Phase 4 Test') && linked === 0) {
+    if (/^Codex Phase [45] Test/.test(client.name) && linked === 0) {
       setData(current => ({ ...current, clients: current.clients.filter(item => item.clientId !== client.clientId) }));
       return;
     }
@@ -415,7 +469,7 @@ function calculateProjectFinance(data, project) {
   return calculateProjectFinancials(data, project.projectId);
 }
 
-export function ProjectDistrict({ data, setData, initialProjectId, openDesign, openClients, openEstimates, openFinance }) {
+export function ProjectDistrict({ data, setData, initialProjectId, openDesign, openClients, openEstimates, openFinance, openPresentation }) {
   const blankProject = { name: '', clientId: '', propertyAddress: '', status: 'Lead', startDate: '', targetCompletionDate: '', budget: '', notes: '' };
   const [form, setForm] = useState(blankProject);
   const [projectErrors, setProjectErrors] = useState({});
@@ -488,7 +542,20 @@ export function ProjectDistrict({ data, setData, initialProjectId, openDesign, o
       profitPlan: { laborHours: '', laborRate: '', mileage: '', mileageRate: '', desiredMargin: '30' },
     };
     setData(current => {
-      let next = { ...current, projects: [project, ...current.projects] };
+      let next = {
+        ...current,
+        projects: [project, ...current.projects],
+        presentationSettings: [createPresentationSettings(project), ...current.presentationSettings],
+        presentationSections: [...createPresentationSections(projectId), ...current.presentationSections],
+        presentationTheme: [{
+          id: `presentation-theme-${projectId}`,
+          themeId: `presentation-theme-${projectId}`,
+          projectId,
+          clientId: project.clientId,
+          themeName: PRESENTATION_THEMES[0],
+          archived: false,
+        }, ...current.presentationTheme],
+      };
       next = addTimelineEvent(next, {
         projectId,
         eventType: 'project.created',
@@ -542,7 +609,7 @@ export function ProjectDistrict({ data, setData, initialProjectId, openDesign, o
   const confirmDeleteProject = () => {
     const project = deleteCandidate;
     if (!project) return;
-    const isTemporaryTest = project.name.startsWith('Codex Phase 4 Test');
+    const isTemporaryTest = /^Codex Phase [45] Test/.test(project.name);
     setData(current => {
       if (!isTemporaryTest) return { ...current, projects: current.projects.filter(item => item.projectId !== project.projectId) };
       const projectId = project.projectId;
@@ -559,12 +626,21 @@ export function ProjectDistrict({ data, setData, initialProjectId, openDesign, o
         projectPhotos: current.projectPhotos.filter(item => item.projectId !== projectId),
         projectNotes: current.projectNotes.filter(item => item.projectId !== projectId),
         designConcepts: current.designConcepts.filter(item => item.projectId !== projectId),
-        designPlants: current.designPlants.filter(item => !String(item.commonName || '').startsWith('Codex Phase 4 Test')),
+        designPlants: current.designPlants.filter(item => !/^Codex Phase [45] Test/.test(String(item.commonName || ''))),
         designInspirations: current.designInspirations.filter(item => item.projectId !== projectId),
         designMeasurements: current.designMeasurements.filter(item => item.projectId !== projectId),
         businessTransactions: current.businessTransactions.filter(item => item.projectId !== projectId),
         expenses: current.expenses.filter(item => item.projectId !== projectId),
         estimates: current.estimates.filter(item => item.projectId !== projectId),
+        presentationSettings: current.presentationSettings.filter(item => item.projectId !== projectId),
+        presentationSections: current.presentationSections.filter(item => item.projectId !== projectId),
+        presentationTheme: current.presentationTheme.filter(item => item.projectId !== projectId),
+        presentationSessions: current.presentationSessions.filter(item => item.projectId !== projectId),
+        presentationNotes: current.presentationNotes.filter(item => item.projectId !== projectId),
+        photoComparisons: current.photoComparisons.filter(item => item.projectId !== projectId),
+        seasonalInterestEntries: current.seasonalInterestEntries.filter(item => item.projectId !== projectId),
+        approvalRecords: current.approvalRecords.filter(item => item.projectId !== projectId),
+        addOnInterestRecords: current.addOnInterestRecords.filter(item => item.projectId !== projectId),
       };
     });
     setDeleteCandidate(null);
@@ -637,9 +713,10 @@ export function ProjectDistrict({ data, setData, initialProjectId, openDesign, o
         <button onClick={() => setSelectedId('')}>← Project District</button>
         <div><span>{selected.projectId}</span><h2>{selected.name}</h2><p>{client?.name || 'Unassigned client'} • {selected.propertyAddress || 'No property address'}</p></div>
         <span className="project-status">{selected.status}</span>
+        <button className="project-presentation-action" onClick={() => openPresentation({ projectId: selected.projectId, mode: 'present' })}>Presentation Mode</button>
       </div>
       <ProjectHealthBanner data={data} project={selected} setData={setData} />
-      <nav className="project-hub-tabs" aria-label="Project Hub sections">{['Overview', 'Client', 'Design', 'Plant Plan', 'Plant Sourcing', 'Finance', 'Estimates & Invoices', 'Photos', 'Documents', 'Notes', 'Tasks', 'Timeline', 'Plant Passports', 'Completion Checklist'].map(item => <button key={item} className={tab === item ? 'active' : ''} onClick={() => setTab(item)}>{item}</button>)}</nav>
+      <nav className="project-hub-tabs" aria-label="Project Hub sections">{['Overview', 'Client Proposal', 'Client', 'Design', 'Plant Plan', 'Plant Sourcing', 'Finance', 'Estimates & Invoices', 'Photos', 'Documents', 'Notes', 'Tasks', 'Timeline', 'Plant Passports', 'Completion Checklist'].map(item => <button key={item} className={tab === item ? 'active' : ''} onClick={() => setTab(item)}>{item}</button>)}</nav>
 
       {tab === 'Overview' && <section className="panel glass project-overview-panel">
         <div className="district-panel-title"><div><span className="district-eyebrow">Project Hub</span><h3>Overview</h3></div><strong>{selected.projectId}</strong></div>
@@ -654,8 +731,10 @@ export function ProjectDistrict({ data, setData, initialProjectId, openDesign, o
           <label className="wide">Project notes<textarea value={selected.notes} onChange={event => patchProject({ notes: event.target.value })} /></label>
         </div>
         <div className="project-danger-row"><button onClick={() => archiveProject(selected)}>Archive project</button><button className="danger" onClick={() => deleteProject(selected)}>Delete project</button></div>
-        {deleteCandidate?.projectId === selected.projectId && <div className="project-form-summary" role="alert"><strong>{selected.name.startsWith('Codex Phase 4 Test') ? 'Remove this temporary test project and only its connected test records?' : 'Permanently delete this project record?'}</strong><p>{selected.name.startsWith('Codex Phase 4 Test') ? 'The temporary client will remain until it is removed separately from Client District.' : 'Connected financial and sourcing records will remain in their Districts.'}</p><div className="project-danger-row"><button onClick={() => setDeleteCandidate(null)}>Cancel</button><button className="danger" onClick={confirmDeleteProject}>Permanently delete project</button></div></div>}
+        {deleteCandidate?.projectId === selected.projectId && <div className="project-form-summary" role="alert"><strong>{/^Codex Phase [45] Test/.test(selected.name) ? 'Remove this temporary test project and only its connected test records?' : 'Permanently delete this project record?'}</strong><p>{/^Codex Phase [45] Test/.test(selected.name) ? 'The temporary client will remain until it is removed separately from Client District.' : 'Connected financial and sourcing records will remain in their Districts.'}</p><div className="project-danger-row"><button onClick={() => setDeleteCandidate(null)}>Cancel</button><button className="danger" onClick={confirmDeleteProject}>Permanently delete project</button></div></div>}
       </section>}
+
+      {tab === 'Client Proposal' && <PresentationBuilder data={data} setData={setData} project={selected} onPresent={openPresentation} />}
 
       {tab === 'Client' && <section className="panel glass linked-client-panel">
         <div className="district-panel-title"><div><span className="district-eyebrow">Primary relationship</span><h3>Client</h3></div></div>
