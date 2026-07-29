@@ -4,6 +4,262 @@ import './styles.css';
 
 const STORAGE_KEY = 'tierraFleurCommandCenterV1';
 
+const PLANT_CATEGORIES = [
+  'Citrus',
+  'Fruit Trees',
+  'Berries',
+  'Herbs and Tea Plants',
+  'Roses',
+  'Native Plants',
+  'Annuals and Perennials',
+  'Houseplants',
+  'Seeds',
+  'Landscape Supplies',
+];
+
+const categoryTitle = category => category === 'Citrus' ? 'Citrus Trees' : category;
+
+const nurseryDefaults = {
+  name: '',
+  website: '',
+  phone: '',
+  email: '',
+  location: '',
+  sourceType: 'Online',
+  categories: [],
+  specialties: '',
+  plants: '',
+  shipsToDelaware: 'Ask nursery',
+  wholesaleAvailability: 'Ask nursery',
+  notes: '',
+  favorite: false,
+  approved: false,
+  archived: false,
+};
+
+const curatedNurseries = [
+  {
+    id: 'nursery-georgia-grown-citrus',
+    name: 'Georgia Grown Citrus',
+    website: 'https://www.georgiagrowncitrus.com/',
+    phone: '229-234-2797',
+    email: 'georgiagrowncitrus@gmail.com',
+    location: 'Ochlocknee, Georgia',
+    sourceType: 'Both',
+    categories: ['Citrus'],
+    specialties: 'Cold-hardy, grafted citrus for homeowners and commercial growers',
+    plants: 'Satsumas, mandarins, lemons, limes, kumquats, grapefruit, pummelo, citrus soil and supplies',
+    shipsToDelaware: 'Yes',
+    wholesaleAvailability: 'Available',
+    notes: 'USDA-certified greenhouse. Delaware is within the nursery’s published shipping area; appointments are available for farm pickup.',
+  },
+  {
+    id: 'nursery-stark-bros',
+    name: "Stark Bro's",
+    website: 'https://www.starkbros.com/',
+    location: 'Louisiana, Missouri',
+    sourceType: 'Online',
+    categories: ['Fruit Trees', 'Berries'],
+    specialties: 'Fruit trees and productive backyard orchard plants',
+    plants: 'Apple, peach, pear, cherry, plum, nut trees, berries and garden supplies',
+    shipsToDelaware: 'Yes',
+    wholesaleAvailability: 'Ask nursery',
+    notes: 'Long-established mail-order fruit nursery. Confirm current ship windows and Delaware hardiness before ordering.',
+  },
+  {
+    id: 'nursery-nourse-farms',
+    name: 'Nourse Farms',
+    website: 'https://www.noursefarms.com/',
+    phone: '877-632-3779',
+    email: 'info@noursefarms.com',
+    location: 'Whately, Massachusetts',
+    sourceType: 'Online',
+    categories: ['Berries', 'Fruit Trees'],
+    specialties: 'Small-fruit plants for home gardens and commercial production',
+    plants: 'Strawberries, raspberries, blueberries, blackberries, currants, gooseberries, elderberries and asparagus',
+    shipsToDelaware: 'Yes',
+    wholesaleAvailability: 'Available',
+    notes: 'Seasonal dormant plant shipping. Strong option for larger berry plant quantities and grower guidance.',
+  },
+  {
+    id: 'nursery-richters-herbs',
+    name: 'Richters Herbs',
+    website: 'https://www.richters.com/',
+    location: 'Goodwood, Ontario; U.S. orders ship from Buffalo, New York',
+    sourceType: 'Online',
+    categories: ['Herbs and Tea Plants', 'Seeds'],
+    specialties: 'Culinary, medicinal, aromatic and tea herbs',
+    plants: 'Live herb plants, plug trays, seeds, rootstock, dried herbs and specialty collections',
+    shipsToDelaware: 'Yes',
+    wholesaleAvailability: 'Available',
+    notes: 'U.S. plant shipments are inspected and include phytosanitary documentation. Live-plant shipping is seasonal.',
+  },
+  {
+    id: 'nursery-heirloom-roses',
+    name: 'Heirloom Roses',
+    website: 'https://heirloomroses.com/',
+    location: 'St. Paul, Oregon',
+    sourceType: 'Online',
+    categories: ['Roses'],
+    specialties: 'Own-root roses and curated rose collections',
+    plants: 'Climbing, shrub, floribunda, hybrid tea, English-style and fragrant roses',
+    shipsToDelaware: 'Yes',
+    wholesaleAvailability: 'Ask nursery',
+    notes: 'Ships potted own-root roses. Check variety hardiness and current seasonal delivery timing.',
+  },
+  {
+    id: 'nursery-prairie-moon',
+    name: 'Prairie Moon Nursery',
+    website: 'https://www.prairiemoon.com/',
+    location: 'Winona, Minnesota',
+    sourceType: 'Online',
+    categories: ['Native Plants', 'Seeds', 'Annuals and Perennials'],
+    specialties: 'North American native plants and ecological seed mixes',
+    plants: 'Native seed, bare-root plants, potted plants, trays and restoration mixes',
+    shipsToDelaware: 'Yes',
+    wholesaleAvailability: 'Available',
+    notes: 'Seeds ship year-round; live plants ship seasonally. Useful filters include state range, soil and light.',
+  },
+  {
+    id: 'nursery-bluestone-perennials',
+    name: 'Bluestone Perennials',
+    website: 'https://www.bluestoneperennials.com/',
+    location: 'Madison, Ohio',
+    sourceType: 'Online',
+    categories: ['Annuals and Perennials'],
+    specialties: 'Mail-order perennials, shrubs, grasses and bulbs',
+    plants: 'Flowering perennials, groundcovers, ornamental grasses, mums, shrubs and bulbs',
+    shipsToDelaware: 'Yes',
+    wholesaleAvailability: 'Ask nursery',
+    notes: 'Family-run nursery with plants grown in biodegradable pots and seasonal delivery.',
+  },
+  {
+    id: 'nursery-logees',
+    name: "Logee's Plants",
+    website: 'https://www.logees.com/',
+    phone: '860-774-8038',
+    location: 'Danielson, Connecticut',
+    sourceType: 'Online',
+    categories: ['Houseplants', 'Citrus', 'Herbs and Tea Plants', 'Fruit Trees'],
+    specialties: 'Rare tropical, fruiting and greenhouse-grown plants',
+    plants: 'Houseplants, begonias, citrus, figs, tropical fruit, jasmine, culinary plants and collector specimens',
+    shipsToDelaware: 'Yes',
+    wholesaleAvailability: 'Ask nursery',
+    notes: 'Weather-aware year-round shipping from Connecticut. Especially useful for conservatory and indoor edible plants.',
+  },
+  {
+    id: 'nursery-johnnys-seeds',
+    name: "Johnny's Selected Seeds",
+    website: 'https://www.johnnyseeds.com/',
+    location: 'Winslow, Maine',
+    sourceType: 'Online',
+    categories: ['Seeds', 'Herbs and Tea Plants', 'Annuals and Perennials'],
+    specialties: 'Professional-quality seed and growing tools',
+    plants: 'Vegetable, herb, flower and microgreen seed; tools, trays and season-extension supplies',
+    shipsToDelaware: 'Yes',
+    wholesaleAvailability: 'Available',
+    notes: 'Commercial grower resources and bulk quantities are available. Wholesale seed resale has separate qualification rules.',
+  },
+  {
+    id: 'nursery-gateway-garden-center',
+    name: 'Gateway Garden Center',
+    website: 'https://gatewaygardens.com/',
+    phone: '302-239-2727',
+    email: 'info@gatewaygardens.com',
+    location: '7277 Lancaster Pike, Hockessin, Delaware',
+    sourceType: 'Local',
+    categories: ['Native Plants', 'Annuals and Perennials', 'Houseplants', 'Landscape Supplies'],
+    specialties: 'Regional native plants and ecologically friendly landscapes',
+    plants: 'Native plants, trees, shrubs, perennials, annuals, houseplants and garden materials',
+    shipsToDelaware: 'Local pickup',
+    wholesaleAvailability: 'Ask nursery',
+    notes: 'Delaware source with a strong regional-native focus. Call ahead for project quantities and current inventory.',
+  },
+  {
+    id: 'nursery-east-coast-garden-center',
+    name: 'East Coast Garden Center',
+    website: 'https://www.eastcoastgardencenter.com/',
+    phone: '302-945-3489',
+    location: '30366 Cordrey Road, Millsboro, Delaware',
+    sourceType: 'Local',
+    categories: ['Native Plants', 'Annuals and Perennials', 'Houseplants', 'Landscape Supplies'],
+    specialties: 'Retail and wholesale nursery, containers, design and installation',
+    plants: 'Trees, evergreens, shrubs, native plants, perennials, annuals, tropicals, houseplants and grasses',
+    shipsToDelaware: 'Local pickup',
+    wholesaleAvailability: 'Available',
+    notes: 'Large Sussex County garden center and wholesale nursery. Good candidate for project-scale sourcing.',
+  },
+  {
+    id: 'nursery-willey-farms',
+    name: 'Willey Farms',
+    website: 'https://www.willeyfarmsde.com/',
+    phone: '302-378-8441',
+    location: '4092 Dupont Parkway, Townsend, Delaware',
+    sourceType: 'Local',
+    categories: ['Annuals and Perennials', 'Houseplants', 'Herbs and Tea Plants', 'Landscape Supplies'],
+    specialties: 'Year-round greenhouse, nursery and garden center',
+    plants: 'Seasonal garden plants, greenhouse plants, herbs, vegetables, gifts and garden goods',
+    shipsToDelaware: 'Local pickup',
+    wholesaleAvailability: 'Ask nursery',
+    notes: 'Family-owned Delaware market and garden center. Call ahead for specialty plant availability.',
+  },
+  {
+    id: 'nursery-old-country-gardens',
+    name: 'Old Country Gardens',
+    website: 'https://oldcountrygardens.com/',
+    phone: '302-652-3317',
+    location: '414 Wilson Road, Wilmington, Delaware',
+    sourceType: 'Local',
+    categories: ['Roses', 'Annuals and Perennials', 'Houseplants', 'Herbs and Tea Plants', 'Landscape Supplies'],
+    specialties: 'Full-service garden center with indoor and outdoor plants',
+    plants: 'Trees, annuals, perennials, roses, herbs, vegetables, tropicals, orchids, mulches, stone and pottery',
+    shipsToDelaware: 'Local pickup',
+    wholesaleAvailability: 'Ask nursery',
+    notes: 'Broad New Castle County source for planting projects, containers and finishing materials.',
+  },
+].map(nursery => ({ ...nurseryDefaults, ...nursery }));
+
+function inferNurseryCategories(item) {
+  const text = `${item.name || ''} ${item.specialties || ''} ${item.products || ''} ${item.plants || ''}`.toLowerCase();
+  const matches = [
+    [/citrus|lemon|lime|satsuma|kumquat|mandarin/, 'Citrus'],
+    [/fruit tree|orchard|apple|peach|pear|cherry|fig/, 'Fruit Trees'],
+    [/berr|strawberr|raspberr|blueberr|blackberr|currant/, 'Berries'],
+    [/herb|tea|medicinal|culinary/, 'Herbs and Tea Plants'],
+    [/\brose/, 'Roses'],
+    [/\bnative|ecological|restoration/, 'Native Plants'],
+    [/annual|perennial|bulb|grass|groundcover/, 'Annuals and Perennials'],
+    [/houseplant|tropical|indoor|begonia|orchid/, 'Houseplants'],
+    [/\bseed|microgreen/, 'Seeds'],
+    [/supply|supplies|mulch|stone|soil|pottery|hardscape/, 'Landscape Supplies'],
+  ].filter(([pattern]) => pattern.test(text)).map(([, category]) => category);
+  return matches.length ? matches : ['Annuals and Perennials'];
+}
+
+function normalizeNursery(item = {}) {
+  const legacyNotes = [item.personalNotes, item.shippingNotes, item.pricingNotes, item.qualityNotes].filter(Boolean).join('\n');
+  const categories = Array.isArray(item.categories) && item.categories.length ? item.categories.filter(category => PLANT_CATEGORIES.includes(category)) : inferNurseryCategories(item);
+  return {
+    ...nurseryDefaults,
+    ...item,
+    categories: categories.length ? categories : ['Annuals and Perennials'],
+    plants: item.plants || item.products || '',
+    notes: item.notes || legacyNotes,
+    favorite: Boolean(item.favorite),
+    approved: Boolean(item.approved),
+    archived: Boolean(item.archived),
+  };
+}
+
+function mergeNurserySeed(seed, saved) {
+  if (!saved) return normalizeNursery(seed);
+  const meaningfulSavedValues = Object.fromEntries(Object.entries(saved).filter(([, value]) => {
+    if (Array.isArray(value)) return value.length > 0;
+    return value !== '' && value !== null && value !== undefined;
+  }));
+  return normalizeNursery({ ...seed, ...meaningfulSavedValues });
+}
+
 const starter = {
   business: {
     name: 'Tierra Fleur Designs',
@@ -26,21 +282,28 @@ const starter = {
     { id: crypto.randomUUID(), name: 'Edible Landscape Design', price: 450, unit: 'project' },
     { id: crypto.randomUUID(), name: 'Container Garden Installation', price: 275, unit: 'installation' },
   ],
-  nurseries: [
-    { id: 'nursery-nature-hills', name: 'Nature Hills Nursery', website: '', phone: '', email: '', location: '', specialties: '', products: '', wholesaleAvailability: '', shippingNotes: '', pricingNotes: '', qualityNotes: '', personalNotes: '', favorite: false },
-    { id: 'nursery-richters-herbs', name: 'Richters Herbs', website: '', phone: '', email: '', location: '', specialties: '', products: '', wholesaleAvailability: '', shippingNotes: '', pricingNotes: '', qualityNotes: '', personalNotes: '', favorite: false },
-    { id: 'nursery-morningsun-herb-farm', name: 'Morningsun Herb Farm', website: '', phone: '', email: '', location: '', specialties: '', products: '', wholesaleAvailability: '', shippingNotes: '', pricingNotes: '', qualityNotes: '', personalNotes: '', favorite: false },
-    { id: 'nursery-hirts-gardens', name: 'Hirt’s Gardens', website: '', phone: '', email: '', location: '', specialties: '', products: '', wholesaleAvailability: '', shippingNotes: '', pricingNotes: '', qualityNotes: '', personalNotes: '', favorite: false },
-  ],
+  nurseries: curatedNurseries,
+  plantSourcingVersion: 1,
   notes: '',
   learning: { history: [], completed: [], preferences: { level: 'Growing', focus: 'Business + Design' } },
 };
 
 function normalizeData(saved = {}) {
+  const savedNurseries = Array.isArray(saved.nurseries) ? saved.nurseries : [];
+  const needsPlantSourcingMigration = Number(saved.plantSourcingVersion || 0) < 1;
+  const savedById = new Map(savedNurseries.map(nursery => [nursery.id, nursery]));
+  const seededIds = new Set(curatedNurseries.map(nursery => nursery.id));
+  const migratedNurseries = needsPlantSourcingMigration
+    ? [
+        ...curatedNurseries.map(nursery => mergeNurserySeed(nursery, savedById.get(nursery.id))),
+        ...savedNurseries.filter(nursery => !seededIds.has(nursery.id)).map(normalizeNursery),
+      ]
+    : savedNurseries.map(normalizeNursery);
   return {
     ...starter,
     ...saved,
-    nurseries: Array.isArray(saved.nurseries) ? saved.nurseries : starter.nurseries,
+    nurseries: migratedNurseries,
+    plantSourcingVersion: 1,
   };
 }
 
@@ -140,7 +403,7 @@ function App() {
             ['estimates', '▤', 'Estimates & Invoices'],
             ['tasks', '✓', 'Tasks'],
             ['services', '❀', 'Services & Pricing'],
-            ['nurseries', '♧', 'Nursery Directory'],
+            ['plant-sourcing', '♧', 'Plant Sourcing'],
             ['learning', '✦', 'Live Learning Center'],
             ['settings', '⚙', 'Business Settings'],
           ].map(([id, icon, label]) => (
@@ -160,7 +423,7 @@ function App() {
         {view === 'estimates' && <Estimates items={data.estimates} setItems={v => update('estimates', v)} clients={data.clients} services={data.services} business={data.business} />}
         {view === 'tasks' && <Tasks items={data.tasks} setItems={v => update('tasks', v)} />}
         {view === 'services' && <Services items={data.services} setItems={v => update('services', v)} />}
-        {view === 'nurseries' && <NurseryDirectory items={data.nurseries} setItems={v => update('nurseries', v)} />}
+        {view === 'plant-sourcing' && <PlantSourcingDirectory items={data.nurseries} setItems={v => update('nurseries', v)} />}
         {view === 'learning' && <LearningCenter learning={data.learning || starter.learning} setLearning={v => update('learning', v)} />}
         {view === 'settings' && <Settings data={data} setData={setData} />}
       </main>
@@ -211,7 +474,7 @@ function Dashboard({ data, nav, weather, refreshWeather }) {
             ['Record an expense', 'Attach and store a receipt', 'money'],
             ['Create an estimate', 'Build a professional client quote', 'estimates'],
             ['Plan a project', 'Track scope, dates, and status', 'projects'],
-            ['Nursery Directory', 'Search trusted growers and suppliers', 'nurseries'],
+            ['Plant Sourcing', 'Search trusted growers and suppliers', 'plant-sourcing'],
             ['Start a live lesson', 'Fresh business and design learning', 'learning'],
           ].map(([title, text, target]) => <button key={title} onClick={() => nav(target)}><strong>{title}</strong><span>{text}</span></button>)}
         </div>
@@ -520,6 +783,236 @@ function NurseryDirectory({ items, setItems }) {
           {!filtered.length && <div className="nursery-empty"><strong>No nurseries match this view.</strong><p>Try a different search or show all saved sources.</p></div>}
         </div>
       </section>
+    </div>
+  </div>;
+}
+
+
+const createBlankPlantSource = () => ({ ...nurseryDefaults, categories: [] });
+
+function PlantSourcingDirectory({ items, setItems }) {
+  const [form, setForm] = useState(createBlankPlantSource);
+  const [editingId, setEditingId] = useState(null);
+  const [formOpen, setFormOpen] = useState(false);
+  const [formError, setFormError] = useState('');
+  const [search, setSearch] = useState('');
+  const [category, setCategory] = useState('All');
+  const [favoritesOnly, setFavoritesOnly] = useState(false);
+  const [approvedOnly, setApprovedOnly] = useState(false);
+  const [showArchived, setShowArchived] = useState(false);
+
+  const normalizedItems = useMemo(() => items.map(normalizeNursery), [items]);
+  const activeItems = normalizedItems.filter(item => !item.archived);
+  const localCount = activeItems.filter(item => item.location.toLowerCase().includes('delaware')).length;
+  const approvedCount = activeItems.filter(item => item.approved).length;
+
+  const filtered = useMemo(() => {
+    const query = search.trim().toLowerCase();
+    return normalizedItems
+      .filter(item => showArchived ? item.archived : !item.archived)
+      .filter(item => category === 'All' || item.categories.includes(category))
+      .filter(item => !favoritesOnly || item.favorite)
+      .filter(item => !approvedOnly || item.approved)
+      .filter(item => {
+        if (!query) return true;
+        const searchable = [
+          item.name,
+          item.location,
+          item.phone,
+          item.email,
+          item.sourceType,
+          item.specialties,
+          item.plants,
+          item.notes,
+          item.shipsToDelaware,
+          item.wholesaleAvailability,
+          ...item.categories,
+        ].join(' ').toLowerCase();
+        return searchable.includes(query);
+      })
+      .sort((a, b) =>
+        Number(Boolean(b.approved)) - Number(Boolean(a.approved))
+        || Number(Boolean(b.favorite)) - Number(Boolean(a.favorite))
+        || a.name.localeCompare(b.name)
+      );
+  }, [normalizedItems, search, category, favoritesOnly, approvedOnly, showArchived]);
+
+  const groups = useMemo(() => {
+    if (category !== 'All') return [{ category, nurseries: filtered }];
+    return PLANT_CATEGORIES
+      .map(groupCategory => ({
+        category: groupCategory,
+        nurseries: filtered.filter(item => item.categories[0] === groupCategory),
+      }))
+      .filter(group => group.nurseries.length);
+  }, [filtered, category]);
+
+  const setField = (key, value) => setForm(current => ({ ...current, [key]: value }));
+  const resetForm = () => {
+    setForm(createBlankPlantSource());
+    setEditingId(null);
+    setFormError('');
+    setFormOpen(false);
+  };
+  const beginAdd = () => {
+    setForm(createBlankPlantSource());
+    setEditingId(null);
+    setFormError('');
+    setFormOpen(true);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+  const edit = item => {
+    setForm({ ...createBlankPlantSource(), ...normalizeNursery(item), categories: [...normalizeNursery(item).categories] });
+    setEditingId(item.id);
+    setFormError('');
+    setFormOpen(true);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+  const toggleCategory = selectedCategory => {
+    const categories = form.categories.includes(selectedCategory)
+      ? form.categories.filter(item => item !== selectedCategory)
+      : [...form.categories, selectedCategory];
+    setField('categories', categories);
+    if (categories.length) setFormError('');
+  };
+  const save = event => {
+    event.preventDefault();
+    if (!form.name.trim() || !form.categories.length) {
+      setFormError('Add a nursery name and choose at least one plant specialty.');
+      return;
+    }
+    const record = normalizeNursery({ ...form, name: form.name.trim() });
+    if (editingId) {
+      setItems(items.map(item => item.id === editingId ? { ...record, id: editingId } : item));
+    } else {
+      setItems([{ ...record, id: crypto.randomUUID() }, ...items]);
+    }
+    resetForm();
+  };
+  const patchItem = (id, patch) => setItems(items.map(item => item.id === id ? { ...item, ...patch } : item));
+  const archive = item => {
+    patchItem(item.id, { archived: !item.archived });
+    if (editingId === item.id) resetForm();
+  };
+  const remove = item => {
+    if (confirm(`Permanently delete ${item.name} from Plant Sourcing?`)) {
+      setItems(items.filter(nursery => nursery.id !== item.id));
+      if (editingId === item.id) resetForm();
+    }
+  };
+  const websiteUrl = value => {
+    if (!value) return '';
+    const candidate = /^https?:\/\//i.test(value) ? value : `https://${value}`;
+    try {
+      const parsed = new URL(candidate);
+      return ['http:', 'https:'].includes(parsed.protocol) ? parsed.href : '';
+    } catch {
+      return '';
+    }
+  };
+
+  return <div className="page plant-sourcing-page">
+    <SectionTitle
+      eyebrow="Curated grower library"
+      title="Plant Sourcing Directory"
+      text="Find trusted Delaware garden centers and reputable specialty growers by nursery, plant, or category."
+      action={<button type="button" className="primary source-add-button" onClick={beginAdd}>+ Add nursery</button>}
+    />
+
+    <section className="source-overview glass">
+      <span className="source-butterfly" aria-hidden="true">&#129419;</span>
+      <div className="source-search-row">
+        <label className="source-search">
+          <span>Search the directory</span>
+          <input type="search" placeholder="Search nursery, plant, or category…" value={search} onChange={event => setSearch(event.target.value)} />
+        </label>
+        <div className="source-stats" aria-label="Plant sourcing summary">
+          <div><strong>{activeItems.length}</strong><span>Active sources</span></div>
+          <div><strong>{localCount}</strong><span>Delaware sources</span></div>
+          <div><strong>{approvedCount}</strong><span>TF approved</span></div>
+        </div>
+      </div>
+      <div className="category-filter" aria-label="Filter by plant specialty">
+        {['All', ...PLANT_CATEGORIES].map(item => <button type="button" key={item} className={category === item ? 'active' : ''} onClick={() => setCategory(item)} aria-pressed={category === item}>{item === 'All' ? 'All specialties' : categoryTitle(item)}</button>)}
+      </div>
+      <div className="source-view-filters">
+        <button type="button" className={favoritesOnly ? 'active' : ''} onClick={() => setFavoritesOnly(value => !value)} aria-pressed={favoritesOnly}>★ Favorites</button>
+        <button type="button" className={approvedOnly ? 'active approved' : ''} onClick={() => setApprovedOnly(value => !value)} aria-pressed={approvedOnly}>Tierra Fleur Approved</button>
+        <button type="button" className={showArchived ? 'active archive' : ''} onClick={() => setShowArchived(value => !value)} aria-pressed={showArchived}>{showArchived ? 'Viewing archived' : 'View archived'}</button>
+        <span>{filtered.length} {filtered.length === 1 ? 'nursery' : 'nurseries'}</span>
+      </div>
+    </section>
+
+    {formOpen && <form className="source-form panel glass" onSubmit={save}>
+      <div className="source-form-header">
+        <div><span className="form-eyebrow">{editingId ? 'Editing source' : 'New plant source'}</span><h3>{editingId ? form.name || 'Nursery record' : 'Add a nursery'}</h3></div>
+        <button type="button" onClick={resetForm}>Close</button>
+      </div>
+      <div className="source-form-grid">
+        <label>Nursery name *<input required value={form.name} onChange={event => setField('name', event.target.value)} placeholder="Nursery or grower name" /></label>
+        <label>Website<input inputMode="url" value={form.website} onChange={event => setField('website', event.target.value)} placeholder="https://…" /></label>
+        <label>Location<input value={form.location} onChange={event => setField('location', event.target.value)} placeholder="City, state or service area" /></label>
+        <label>Phone<input inputMode="tel" value={form.phone} onChange={event => setField('phone', event.target.value)} placeholder="Nursery phone" /></label>
+        <label>Email<input type="email" inputMode="email" value={form.email} onChange={event => setField('email', event.target.value)} placeholder="Nursery email" /></label>
+        <label>Source type<select value={form.sourceType} onChange={event => setField('sourceType', event.target.value)}>{['Local', 'Online', 'Both'].map(item => <option key={item}>{item}</option>)}</select></label>
+        <label>Ships to Delaware<select value={form.shipsToDelaware} onChange={event => setField('shipsToDelaware', event.target.value)}>{['Yes', 'No', 'Local pickup', 'Ask nursery'].map(item => <option key={item}>{item}</option>)}</select></label>
+        <label>Wholesale availability<select value={form.wholesaleAvailability} onChange={event => setField('wholesaleAvailability', event.target.value)}>{['Available', 'Not available', 'Ask nursery'].map(item => <option key={item}>{item}</option>)}</select></label>
+        <label className="field-wide">Specialties<textarea value={form.specialties} onChange={event => setField('specialties', event.target.value)} placeholder="What this nursery does especially well" /></label>
+        <label className="field-wide">Plants carried<textarea value={form.plants} onChange={event => setField('plants', event.target.value)} placeholder="Specific plants, varieties, supplies, or product lines" /></label>
+        <fieldset className="source-category-picker field-wide">
+          <legend>Plant specialties *</legend>
+          <div>{PLANT_CATEGORIES.map(item => <label key={item} className={form.categories.includes(item) ? 'selected' : ''}><input type="checkbox" checked={form.categories.includes(item)} onChange={() => toggleCategory(item)} />{categoryTitle(item)}</label>)}</div>
+        </fieldset>
+        <label className="field-wide">Notes<textarea value={form.notes} onChange={event => setField('notes', event.target.value)} placeholder="Ordering windows, quality notes, minimums, contacts, or project experience" /></label>
+        <div className="source-toggle-row field-wide">
+          <label><input type="checkbox" checked={form.favorite} onChange={event => setField('favorite', event.target.checked)} /> Favorite source</label>
+          <label className="approved-toggle"><input type="checkbox" checked={form.approved} onChange={event => setField('approved', event.target.checked)} /> Tierra Fleur Approved</label>
+        </div>
+      </div>
+      {formError && <p className="source-form-error" role="alert">{formError}</p>}
+      <div className="source-form-actions"><button type="button" onClick={resetForm}>Cancel</button><button className="primary">{editingId ? 'Save nursery changes' : 'Add to Plant Sourcing'}</button></div>
+    </form>}
+
+    <div className="source-groups" aria-live="polite">
+      {groups.map(group => <section className="source-group" key={group.category}>
+        <div className="source-group-heading">
+          <span className="source-flourish" aria-hidden="true">❀</span>
+          <div><span>Plant specialty</span><h3>{categoryTitle(group.category)}</h3></div>
+          <small>{group.nurseries.length} {group.nurseries.length === 1 ? 'source' : 'sources'}</small>
+        </div>
+        <div className="source-card-grid">
+          {group.nurseries.map(item => <article className={`source-card glass${item.favorite ? ' favorite' : ''}${item.approved ? ' approved' : ''}${item.archived ? ' archived' : ''}`} key={item.id}>
+            <div className="source-card-top">
+              <div>
+                <div className="source-card-kicker"><span>{item.sourceType}</span>{item.archived && <span className="archived-badge">Archived</span>}</div>
+                <h4>{item.name}</h4>
+                <p>{item.location || 'Location to be confirmed'}</p>
+              </div>
+              <button type="button" className="source-favorite" onClick={() => patchItem(item.id, { favorite: !item.favorite })} aria-label={`${item.favorite ? 'Remove' : 'Add'} ${item.name} ${item.favorite ? 'from' : 'to'} favorites`} aria-pressed={item.favorite}>{item.favorite ? '★' : '☆'}</button>
+            </div>
+            <div className="source-category-tags">{item.categories.map(itemCategory => <span key={itemCategory}>{categoryTitle(itemCategory)}</span>)}</div>
+            <div className="source-description">
+              <div><span>Specialties</span><p>{item.specialties || 'Add specialty notes'}</p></div>
+              <div><span>Plants & products</span><p>{item.plants || 'Add plants and products'}</p></div>
+            </div>
+            <dl className="source-facts">
+              <div><dt>Ships to Delaware</dt><dd>{item.shipsToDelaware}</dd></div>
+              <div><dt>Wholesale</dt><dd>{item.wholesaleAvailability}</dd></div>
+            </dl>
+            {item.notes && <p className="source-notes">{item.notes}</p>}
+            <button type="button" className={item.approved ? 'source-approved active' : 'source-approved'} onClick={() => patchItem(item.id, { approved: !item.approved })} aria-pressed={item.approved}><span aria-hidden="true">✦</span>{item.approved ? 'Tierra Fleur Approved' : 'Mark Tierra Fleur Approved'}</button>
+            <div className="source-card-actions">
+              {websiteUrl(item.website) ? <a href={websiteUrl(item.website)} target="_blank" rel="noreferrer">Visit website</a> : <span className="source-link-disabled">Website needed</span>}
+              {item.phone && <a className="source-contact-secondary" href={`tel:${item.phone}`}>Call</a>}
+              {item.email && <a className="source-contact-secondary" href={`mailto:${item.email}`}>Email</a>}
+              <button type="button" onClick={() => edit(item)}>Edit</button>
+              <button type="button" onClick={() => archive(item)}>{item.archived ? 'Restore' : 'Archive'}</button>
+              <button type="button" className="danger" onClick={() => remove(item)}>Delete</button>
+            </div>
+          </article>)}
+        </div>
+      </section>)}
+      {!filtered.length && <section className="source-empty glass"><span aria-hidden="true">&#129419;</span><h3>No nurseries match this view.</h3><p>Try another plant specialty, clear a filter, or add a new source.</p></section>}
     </div>
   </div>;
 }
