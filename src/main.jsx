@@ -1,6 +1,14 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import './styles.css';
+import {
+  ClientDistrict,
+  FinanceDistrict,
+  ProjectDistrict,
+  UniversalSearch,
+  createDistrictStarter,
+  migrateDistrictData,
+} from './districts.jsx';
 
 const STORAGE_KEY = 'tierraFleurCommandCenterV1';
 
@@ -217,7 +225,7 @@ const curatedNurseries = [
     wholesaleAvailability: 'Ask nursery',
     notes: 'Broad New Castle County source for planting projects, containers and finishing materials.',
   },
-].map(nursery => ({ ...nurseryDefaults, ...nursery }));
+].map(nursery => ({ ...nurseryDefaults, ...nursery, nurseryId: nursery.id }));
 
 function inferNurseryCategories(item) {
   const text = `${item.name || ''} ${item.specialties || ''} ${item.products || ''} ${item.plants || ''}`.toLowerCase();
@@ -242,6 +250,7 @@ function normalizeNursery(item = {}) {
   return {
     ...nurseryDefaults,
     ...item,
+    nurseryId: item.nurseryId || item.id || `nursery-${crypto.randomUUID()}`,
     categories: categories.length ? categories : ['Annuals and Perennials'],
     plants: item.plants || item.products || '',
     notes: item.notes || legacyNotes,
@@ -284,6 +293,7 @@ const starter = {
   ],
   nurseries: curatedNurseries,
   plantSourcingVersion: 1,
+  ...createDistrictStarter(),
   notes: '',
   learning: { history: [], completed: [], preferences: { level: 'Growing', focus: 'Business + Design' } },
 };
@@ -299,9 +309,11 @@ function normalizeData(saved = {}) {
         ...savedNurseries.filter(nursery => !seededIds.has(nursery.id)).map(normalizeNursery),
       ]
     : savedNurseries.map(normalizeNursery);
+  const districtData = migrateDistrictData(saved);
   return {
     ...starter,
     ...saved,
+    ...districtData,
     nurseries: migratedNurseries,
     plantSourcingVersion: 1,
   };
@@ -332,6 +344,8 @@ function App() {
   const [now, setNow] = useState(new Date());
   const [weather, setWeather] = useState({ status: 'Tap refresh', temp: null, detail: 'Location weather' });
   const [menuOpen, setMenuOpen] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [focusedProjectId, setFocusedProjectId] = useState('');
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
@@ -344,7 +358,13 @@ function App() {
   }, []);
 
   const update = (key, value) => setData(prev => ({ ...prev, [key]: value }));
-  const nav = (next) => { setView(next); setMenuOpen(false); };
+  const nav = (next, options = {}) => {
+    if (['projects', 'sketch'].includes(next) && !options.keepProject) setFocusedProjectId('');
+    setView(next);
+    setMenuOpen(false);
+  };
+  const openProject = projectId => { setFocusedProjectId(projectId); nav('projects', { keepProject: true }); };
+  const openDesign = projectId => { setFocusedProjectId(projectId); nav('sketch', { keepProject: true }); };
 
   const refreshWeather = () => {
     setWeather({ status: 'Loading…', temp: null, detail: 'Finding your location' });
@@ -380,6 +400,7 @@ function App() {
             <p>Business Command Center</p>
           </div>
         </div>
+        <button className="global-search-button" onClick={() => setSearchOpen(true)}><span aria-hidden="true">⌕</span><b>Search Districts</b></button>
         <div className="date-weather">
           <div className="clock">
             <strong>{now.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</strong>
@@ -396,16 +417,17 @@ function App() {
         <nav>
           {[
             ['dashboard', '⌂', 'Dashboard'],
-            ['clients', '♙', 'Clients'],
-            ['projects', '✦', 'Projects'],
-            ['sketch', '✎', 'Property Sketch'],
+            ['clients', '♙', 'Client District'],
+            ['projects', '✦', 'Project District'],
+            ['sketch', '✎', 'Design District'],
+            ['finance', '$', 'Finance District'],
             ['money', '$', 'Expenses & Receipts'],
             ['estimates', '▤', 'Estimates & Invoices'],
             ['tasks', '✓', 'Tasks'],
-            ['services', '❀', 'Services & Pricing'],
-            ['plant-sourcing', '♧', 'Plant Sourcing'],
-            ['learning', '✦', 'Live Learning Center'],
-            ['settings', '⚙', 'Business Settings'],
+            ['services', '❀', 'Services District'],
+            ['plant-sourcing', '♧', 'Plant Sourcing District'],
+            ['learning', '✦', 'Learning District'],
+            ['settings', '⚙', 'Business District'],
           ].map(([id, icon, label]) => (
             <button key={id} className={view === id ? 'active' : ''} onClick={() => nav(id)}>
               <span>{icon}</span>{label}
@@ -414,13 +436,16 @@ function App() {
         </nav>
       </aside>
 
+      <UniversalSearch open={searchOpen} onClose={() => setSearchOpen(false)} data={data} navigate={nav} openProject={openProject} />
+
       <main className="main-content">
         {view === 'dashboard' && <Dashboard data={data} nav={nav} weather={weather} refreshWeather={refreshWeather} />}
-        {view === 'clients' && <Clients items={data.clients} setItems={v => update('clients', v)} />}
-        {view === 'projects' && <Projects items={data.projects} setItems={v => update('projects', v)} clients={data.clients} />}
-        {view === 'sketch' && <SketchStudio projects={data.projects} />}
+        {view === 'clients' && <ClientDistrict data={data} setData={setData} openProject={openProject} />}
+        {view === 'projects' && <ProjectDistrict data={data} setData={setData} initialProjectId={focusedProjectId} openDesign={openDesign} />}
+        {view === 'sketch' && <SketchStudio projects={data.projects} initialProjectId={focusedProjectId} />}
+        {view === 'finance' && <FinanceDistrict data={data} setData={setData} openProject={openProject} />}
         {view === 'money' && <Expenses items={data.expenses} setItems={v => update('expenses', v)} />}
-        {view === 'estimates' && <Estimates items={data.estimates} setItems={v => update('estimates', v)} clients={data.clients} services={data.services} business={data.business} />}
+        {view === 'estimates' && <Estimates items={data.estimates} setItems={v => update('estimates', v)} clients={data.clients} projects={data.projects} services={data.services} business={data.business} />}
         {view === 'tasks' && <Tasks items={data.tasks} setItems={v => update('tasks', v)} />}
         {view === 'services' && <Services items={data.services} setItems={v => update('services', v)} />}
         {view === 'plant-sourcing' && <PlantSourcingDirectory items={data.nurseries} setItems={v => update('nurseries', v)} />}
@@ -471,6 +496,7 @@ function Dashboard({ data, nav, weather, refreshWeather }) {
         <div className="quick-grid">
           {[
             ['New property sketch', 'Sketch over a client photo', 'sketch'],
+            ['Finance District', 'Personal and Tierra Fleur ledgers', 'finance'],
             ['Record an expense', 'Attach and store a receipt', 'money'],
             ['Create an estimate', 'Build a professional client quote', 'estimates'],
             ['Plan a project', 'Track scope, dates, and status', 'projects'],
@@ -538,7 +564,7 @@ function Projects({ items, setItems, clients }) {
   </div>;
 }
 
-function SketchStudio({ projects }) {
+function SketchStudio({ projects, initialProjectId = '' }) {
   const canvasRef = useRef(null);
   const imageRef = useRef(null);
   const [baseImage, setBaseImage] = useState(null);
@@ -546,7 +572,8 @@ function SketchStudio({ projects }) {
   const [tool, setTool] = useState('pen');
   const [size, setSize] = useState(6);
   const [color, setColor] = useState('#c8495c');
-  const [project, setProject] = useState('');
+  const [project, setProject] = useState(initialProjectId);
+  useEffect(() => { if (initialProjectId) setProject(initialProjectId); }, [initialProjectId]);
 
   const setupCanvas = (img) => {
     const canvas = canvasRef.current;
@@ -579,7 +606,7 @@ function SketchStudio({ projects }) {
 
   return <div className="page"><SectionTitle eyebrow="Design studio" title="Property Sketch" text="Upload a client property photo, then draw directly over it with your finger, Apple Pencil, or mouse." />
     <div className="panel glass sketch-toolbar">
-      <select value={project} onChange={e => setProject(e.target.value)}><option value="">Choose project label</option>{projects.map(p => <option key={p.id} value={p.title}>{p.title}</option>)}</select>
+      <select value={project} onChange={e => setProject(e.target.value)}><option value="">Choose project label</option>{projects.map(p => <option key={p.projectId || p.id} value={p.projectId || p.id}>{p.projectId ? `${p.projectId} · ` : ''}{p.name || p.title}</option>)}</select>
       <label className="upload-button">Upload property photo<input type="file" accept="image/*" onChange={upload} /></label>
       <button className={tool === 'pen' ? 'active-tool' : ''} onClick={() => setTool('pen')}>Pen</button>
       <button className={tool === 'eraser' ? 'active-tool' : ''} onClick={() => setTool('eraser')}>Eraser</button>
@@ -598,8 +625,15 @@ function Expenses({ items, setItems }) {
   const blank = { date: new Date().toISOString().slice(0,10), vendor: '', category: 'Plants & Materials', amount: '', project: '', notes: '', receipt: '' };
   const [form, setForm] = useState(blank);
   const addReceipt = e => { const f = e.target.files?.[0]; if (!f) return; const r = new FileReader(); r.onload = () => setForm({ ...form, receipt: r.result, receiptName: f.name }); r.readAsDataURL(f); };
-  const add = e => { e.preventDefault(); if (!form.vendor || !form.amount) return; setItems([{ ...form, id: crypto.randomUUID() }, ...items]); setForm(blank); };
-  const total = items.reduce((s, x) => s + Number(x.amount || 0), 0);
+  const add = e => {
+    e.preventDefault();
+    if (!form.vendor || !form.amount) return;
+    const id = crypto.randomUUID();
+    setItems([{ ...form, id, transactionId: `txn-business-${id}`, receiptId: form.receipt ? `receipt-${crypto.randomUUID()}` : '', clientId: '', projectId: '', nurseryId: '', archived: false }, ...items]);
+    setForm(blank);
+  };
+  const activeItems = items.filter(item => !item.archived);
+  const total = activeItems.reduce((s, x) => s + Number(x.amount || 0), 0);
   return <div className="page"><SectionTitle eyebrow="Bookkeeping" title="Expenses & Receipts" text="Record business spending and keep a photo or PDF receipt with each entry." action={<div className="total-chip">Total {money(total)}</div>} />
     <div className="two-column">
       <form className="panel glass form-grid" onSubmit={add}><h3>Record expense</h3>
@@ -612,20 +646,44 @@ function Expenses({ items, setItems }) {
         <label className="upload-button">Attach receipt<input type="file" accept="image/*,.pdf" onChange={addReceipt} /></label>{form.receiptName && <small>{form.receiptName}</small>}
         <button className="primary">Save expense</button>
       </form>
-      <div className="panel glass"><h3>Expense ledger</h3><div className="cards-list">{items.map(x => <article key={x.id} className="record-card"><div><h4>{x.vendor} — {money(x.amount)}</h4><p>{x.category} • {formatDate(x.date)}</p><small>{x.project || x.notes || 'No project note'}</small>{x.receipt && <a href={x.receipt} target="_blank" rel="noreferrer">Open receipt</a>}</div><button className="danger" onClick={() => setItems(items.filter(i => i.id !== x.id))}>Delete</button></article>)}{!items.length && <p className="empty">No expenses recorded.</p>}</div></div>
+      <div className="panel glass"><h3>Expense ledger</h3><div className="cards-list">{activeItems.map(x => <article key={x.id} className="record-card"><div><h4>{x.vendor} — {money(x.amount)}</h4><p>{x.category} • {formatDate(x.date)}</p><small>{x.project || x.notes || 'No project note'}</small>{x.receipt && <a href={x.receipt} target="_blank" rel="noreferrer">Open receipt</a>}</div><div className="stack-actions"><button onClick={() => setItems(items.map(item => item.id === x.id ? { ...item, archived: true } : item))}>Archive</button><button className="danger" onClick={() => { if (confirm(`Permanently delete the ${money(x.amount)} expense from ${x.vendor}?`)) setItems(items.filter(i => i.id !== x.id)); }}>Delete</button></div></article>)}{!activeItems.length && <p className="empty">No expenses recorded.</p>}</div></div>
     </div>
   </div>;
 }
 
-function Estimates({ items, setItems, clients, services, business }) {
-  const [client, setClient] = useState('');
+function Estimates({ items, setItems, clients, projects, services, business }) {
+  const [clientId, setClientId] = useState('');
+  const [projectId, setProjectId] = useState('');
+  const [documentType, setDocumentType] = useState('Estimate');
   const [title, setTitle] = useState('Landscape Design Proposal');
   const [status, setStatus] = useState('Draft');
   const [lines, setLines] = useState([{ id: crypto.randomUUID(), description: '', qty: 1, price: 0 }]);
+  const activeDocuments = items.filter(item => !item.archived);
   const subtotal = lines.reduce((s, l) => s + Number(l.qty || 0) * Number(l.price || 0), 0);
   const tax = subtotal * Number(business.defaultTax || 0) / 100;
   const total = subtotal + tax;
-  const add = () => { if (!client || !lines.some(l => l.description)) return; setItems([{ id: crypto.randomUUID(), client, title, status, lines, subtotal, tax, total, date: new Date().toISOString().slice(0,10) }, ...items]); };
+  const add = () => {
+    if (!clientId || !lines.some(l => l.description)) return;
+    const id = crypto.randomUUID();
+    const client = clients.find(item => (item.clientId || item.id) === clientId);
+    setItems([{
+      id,
+      documentType,
+      estimateId: documentType === 'Estimate' ? `estimate-${id}` : '',
+      invoiceId: documentType === 'Invoice' ? `invoice-${id}` : '',
+      client: client?.name || '',
+      clientId,
+      projectId,
+      title,
+      status,
+      lines,
+      subtotal,
+      tax,
+      total,
+      date: new Date().toISOString().slice(0,10),
+      archived: false,
+    }, ...items]);
+  };
   const print = estimate => {
     const win = window.open('', '_blank');
     win.document.write(`<html><head><title>${estimate.title}</title><style>body{font-family:Georgia,serif;padding:48px;color:#263127}h1{color:#52684f}table{width:100%;border-collapse:collapse;margin-top:24px}td,th{padding:10px;border-bottom:1px solid #ddd;text-align:left}.total{text-align:right;font-size:20px;margin-top:24px}</style></head><body><h1>${business.name}</h1><p>${business.tagline}</p><hr><h2>${estimate.title}</h2><p><strong>Client:</strong> ${estimate.client}<br><strong>Date:</strong> ${formatDate(estimate.date)}<br><strong>Status:</strong> ${estimate.status}</p><table><thead><tr><th>Description</th><th>Qty</th><th>Rate</th><th>Amount</th></tr></thead><tbody>${estimate.lines.map(l => `<tr><td>${l.description}</td><td>${l.qty}</td><td>${money(l.price)}</td><td>${money(l.qty*l.price)}</td></tr>`).join('')}</tbody></table><div class='total'><p>Subtotal: ${money(estimate.subtotal)}</p><p>Tax: ${money(estimate.tax)}</p><h3>Total: ${money(estimate.total)}</h3></div><script>window.print()</script></body></html>`);
@@ -634,7 +692,9 @@ function Estimates({ items, setItems, clients, services, business }) {
   return <div className="page"><SectionTitle eyebrow="Sales" title="Estimates & Invoices" text="Build quotes, mark payment status, and print polished client documents." />
     <div className="two-column">
       <div className="panel glass form-grid"><h3>Create document</h3>
-        <select value={client} onChange={e => setClient(e.target.value)}><option value="">Select client *</option>{clients.map(c => <option key={c.id}>{c.name}</option>)}</select>
+        <select value={documentType} onChange={e => setDocumentType(e.target.value)}>{['Estimate','Invoice'].map(item => <option key={item}>{item}</option>)}</select>
+        <select value={clientId} onChange={e => setClientId(e.target.value)}><option value="">Select client *</option>{clients.map(c => <option key={c.clientId || c.id} value={c.clientId || c.id}>{c.name}</option>)}</select>
+        <select value={projectId} onChange={e => setProjectId(e.target.value)}><option value="">Optional project</option>{projects.filter(project => !project.archived).map(project => <option key={project.projectId || project.id} value={project.projectId || project.id}>{project.projectId ? `${project.projectId} · ` : ''}{project.name || project.title}</option>)}</select>
         <input value={title} onChange={e => setTitle(e.target.value)} />
         <select value={status} onChange={e => setStatus(e.target.value)}>{['Draft','Sent','Approved','Deposit Paid','Paid','Cancelled'].map(x => <option key={x}>{x}</option>)}</select>
         <div className="line-items">{lines.map(line => <div key={line.id} className="line-row"><input list="services" placeholder="Service or item" value={line.description} onChange={e => setLines(lines.map(x => x.id === line.id ? { ...x, description: e.target.value } : x))} /><input type="number" min="1" value={line.qty} onChange={e => setLines(lines.map(x => x.id === line.id ? { ...x, qty: e.target.value } : x))} /><input type="number" step="0.01" value={line.price} onChange={e => setLines(lines.map(x => x.id === line.id ? { ...x, price: e.target.value } : x))} /></div>)}<datalist id="services">{services.map(s => <option key={s.id} value={s.name} />)}</datalist></div>
@@ -642,7 +702,7 @@ function Estimates({ items, setItems, clients, services, business }) {
         <div className="estimate-total"><span>Subtotal {money(subtotal)}</span><span>Tax {money(tax)}</span><strong>Total {money(total)}</strong></div>
         <button className="primary" onClick={add}>Save document</button>
       </div>
-      <div className="panel glass"><h3>Saved documents</h3><div className="cards-list">{items.map(x => <article key={x.id} className="record-card"><div><h4>{x.title}</h4><p>{x.client} • {x.status}</p><strong>{money(x.total)}</strong></div><div className="stack-actions"><button onClick={() => print(x)}>Print / PDF</button><select value={x.status} onChange={e => setItems(items.map(i => i.id === x.id ? { ...i, status: e.target.value } : i))}>{['Draft','Sent','Approved','Deposit Paid','Paid','Cancelled'].map(s => <option key={s}>{s}</option>)}</select><button className="danger" onClick={() => setItems(items.filter(i => i.id !== x.id))}>Delete</button></div></article>)}{!items.length && <p className="empty">No estimates or invoices yet.</p>}</div></div>
+      <div className="panel glass"><h3>Saved documents</h3><div className="cards-list">{activeDocuments.map(x => <article key={x.id} className="record-card"><div><h4>{x.title}</h4><p>{x.documentType || 'Estimate'} • {x.client} • {x.status}</p><strong>{money(x.total)}</strong></div><div className="stack-actions"><button onClick={() => print(x)}>Print / PDF</button><select value={x.status} onChange={e => setItems(items.map(i => i.id === x.id ? { ...i, status: e.target.value } : i))}>{['Draft','Sent','Approved','Deposit Paid','Paid','Cancelled'].map(s => <option key={s}>{s}</option>)}</select><button onClick={() => setItems(items.map(item => item.id === x.id ? { ...item, archived: true } : item))}>Archive</button><button className="danger" onClick={() => { if (confirm(`Delete this ${x.documentType || 'estimate'}?`)) setItems(items.filter(i => i.id !== x.id)); }}>Delete</button></div></article>)}{!activeDocuments.length && <p className="empty">No estimates or invoices yet.</p>}</div></div>
     </div>
   </div>;
 }
