@@ -13,6 +13,7 @@ import {
   createPresentationSettings,
 } from './presentationEngine.js';
 import { PresentationBuilder } from './presentationWorkspace.jsx';
+import { prepareProjectPhoto, PROJECT_PHOTO_ACCEPT } from './imageStorage.js';
 
 export const PERSONAL_CATEGORIES = [
   'Job Income',
@@ -507,6 +508,9 @@ export function ProjectDistrict({ data, setData, initialProjectId, openDesign, o
   const [sourceForm, setSourceForm] = useState({ nurseryId: '', plant: '', quantity: '', estimatedCost: '', status: 'Considering', notes: '' });
   const [photoStage, setPhotoStage] = useState('Before');
   const [photoCaption, setPhotoCaption] = useState('');
+  const [photoDraft, setPhotoDraft] = useState(null);
+  const [photoError, setPhotoError] = useState('');
+  const [photoLoading, setPhotoLoading] = useState(false);
   const [noteText, setNoteText] = useState('');
   const [timeline, setTimeline] = useState({ date: today(), title: '', detail: '' });
   useEffect(() => { if (initialProjectId) { setSelectedId(initialProjectId); setTab('Overview'); } }, [initialProjectId]);
@@ -692,19 +696,48 @@ export function ProjectDistrict({ data, setData, initialProjectId, openDesign, o
     }));
     setSourceForm({ nurseryId: '', plant: '', quantity: '', estimatedCost: '', status: 'Considering', notes: '' });
   };
-  const addPhoto = file => readAttachment(file, attachment => {
+  const selectPhoto = async file => {
+    if (!file) return;
+    setPhotoLoading(true);
+    setPhotoError('');
+    try {
+      const attachment = await prepareProjectPhoto(file);
+      setPhotoDraft({ ...attachment, projectId: selectedId });
+    } catch (error) {
+      setPhotoDraft(null);
+      setPhotoError(error instanceof Error ? error.message : 'The photo could not be prepared.');
+    } finally {
+      setPhotoLoading(false);
+    }
+  };
+  const cancelPhoto = () => {
+    setPhotoDraft(null);
+    setPhotoError('');
+  };
+  const addPhoto = () => {
+    if (!photoDraft) {
+      setPhotoError('Take or upload a photo, then preview it before saving.');
+      return;
+    }
+    if (photoDraft.projectId !== selectedId) {
+      setPhotoDraft(null);
+      setPhotoError('The active project changed. Choose the photo again so it is linked correctly.');
+      return;
+    }
     const id = uid('photo');
-    setData(current => addTimelineEvent({ ...current, projectPhotos: [{ id, photoId: id, projectId: selectedId, stage: photoStage, caption: photoCaption, image: attachment.receipt, fileName: attachment.receiptName, createdAt: new Date().toISOString(), archived: false }, ...current.projectPhotos] }, {
+    setData(current => addTimelineEvent({ ...current, projectPhotos: [{ id, photoId: id, projectId: selectedId, stage: photoStage, caption: photoCaption.trim(), image: photoDraft.data, fileName: photoDraft.name, imageType: photoDraft.type, width: photoDraft.width, height: photoDraft.height, createdAt: new Date().toISOString(), archived: false }, ...current.projectPhotos] }, {
       projectId: selectedId,
       eventType: 'photo.uploaded',
       title: 'Property photo uploaded',
-      description: photoCaption || attachment.receiptName,
+      description: photoCaption.trim() || photoDraft.name,
       relatedRecordId: id,
       dedupeKey: `photo.uploaded:${id}`,
       automatic: true,
     }));
     setPhotoCaption('');
-  });
+    setPhotoDraft(null);
+    setPhotoError('');
+  };
   const addNote = event => {
     event.preventDefault();
     if (!noteText.trim()) return;
@@ -827,7 +860,18 @@ export function ProjectDistrict({ data, setData, initialProjectId, openDesign, o
       </div>}
 
       {tab === 'Photos' && <div className="page">
-        <section className="panel glass photo-upload-panel"><div><span className="district-eyebrow">Project gallery</span><h3>Before, progress, and finished photos</h3><p>Photos are saved locally with the rest of this device’s backup data.</p></div><select value={photoStage} onChange={event => setPhotoStage(event.target.value)}>{['Before', 'Progress', 'Finished'].map(item => <option key={item}>{item}</option>)}</select><input placeholder="Caption" value={photoCaption} onChange={event => setPhotoCaption(event.target.value)} /><label className="primary">Add project photo<input type="file" accept="image/*" onChange={event => addPhoto(event.target.files?.[0])} /></label></section>
+        <section className="panel glass photo-upload-panel">
+          <div><span className="district-eyebrow">Project gallery</span><h3>Before, progress, and finished photos</h3><p>Large phone photos are resized before they are saved with this project and made available in Design Studio.</p></div>
+          <select aria-label="Photo category" value={photoStage} onChange={event => setPhotoStage(event.target.value)}>{['Before', 'Progress', 'Finished'].map(item => <option key={item}>{item}</option>)}</select>
+          <input aria-label="Photo caption" placeholder="Caption" value={photoCaption} onChange={event => setPhotoCaption(event.target.value)} />
+          <div className="photo-source-actions">
+            <label>Take Photo<input type="file" accept={PROJECT_PHOTO_ACCEPT} capture="environment" onChange={event => { selectPhoto(event.target.files?.[0]); event.target.value = ''; }} /></label>
+            <label>Upload Photo<input type="file" accept={PROJECT_PHOTO_ACCEPT} onChange={event => { selectPhoto(event.target.files?.[0]); event.target.value = ''; }} /></label>
+          </div>
+          {photoLoading && <div className="photo-upload-status" role="status">Preparing photo preview…</div>}
+          {photoDraft && <div className="photo-upload-preview"><img src={photoDraft.data} alt="Selected project photo preview" /><div><strong>Preview ready</strong><span>{photoDraft.name} · {photoDraft.width} × {photoDraft.height}</span><button type="button" onClick={cancelPhoto}>Cancel</button><button type="button" className="primary" onClick={addPhoto}>Save Photo</button></div></div>}
+          {photoError && <div className="photo-upload-error" role="alert"><strong>Photo could not be saved.</strong><span>{photoError}</span></div>}
+        </section>
         <div className="project-photo-grid">{photos.map(photo => <article className="glass" key={photo.id}><img src={photo.image} alt={photo.caption || `${photo.stage} project photo`} /><div><span>{photo.stage}</span><p>{photo.caption || photo.fileName}</p><button onClick={() => archiveRelated('projectPhotos', photo.id)}>Archive</button><button className="danger" onClick={() => deleteRelated('projectPhotos', photo.id, 'photo')}>Delete</button></div></article>)}{!photos.length && <EmptyDistrict title="No project photos yet" text="Add before, during, and after images as the work progresses." />}</div>
       </div>}
 
@@ -886,7 +930,7 @@ function PersonalFinance({ data, setData }) {
   const [form, setForm] = useState(transactionBlank);
   const [section, setSection] = useState('Monthly Plan');
   const [showArchived, setShowArchived] = useState(false);
-  const [debtForm, setDebtForm] = useState({ name: '', balance: '', minimumPayment: '', apr: '', dueDay: '', notes: '' });
+  const [debtForm, setDebtForm] = useState({ name: '', balance: '', minimumPayment: '', apr: '', dueDate: '', notes: '' });
   const [goalForm, setGoalForm] = useState({ name: '', kind: 'Savings Goal', target: '', current: '', targetDate: '', notes: '' });
   const transactions = data.personalTransactions.filter(item => !item.archived);
   const visibleTransactions = showArchived ? data.personalTransactions.filter(item => item.archived) : transactions;
@@ -908,7 +952,7 @@ function PersonalFinance({ data, setData }) {
     event.preventDefault();
     if (!debtForm.name.trim()) return;
     setData(current => ({ ...current, personalDebts: [{ ...debtForm, id: uid('debt'), archived: false }, ...current.personalDebts] }));
-    setDebtForm({ name: '', balance: '', minimumPayment: '', apr: '', dueDay: '', notes: '' });
+    setDebtForm({ name: '', balance: '', minimumPayment: '', apr: '', dueDate: '', notes: '' });
   };
   const addGoal = event => {
     event.preventDefault();
@@ -947,7 +991,7 @@ function PersonalFinance({ data, setData }) {
       <section className="panel glass"><div className="district-list-toolbar"><div><span className="district-eyebrow">Personal ledger</span><h3>{showArchived ? 'Archived records' : 'Manual records'}</h3></div><div className="district-toolbar-actions"><button onClick={() => setShowArchived(value => !value)}>{showArchived ? 'View active' : 'View archived'}</button><button onClick={() => downloadCsv('tierra-fleur-personal-finances.csv', transactions.map(({ receipt, ...item }) => item))}>Export CSV</button></div></div><div className="district-record-list">{visibleTransactions.map(item => <article key={item.transactionId}><div><span>{item.type} • {item.status}</span><h4>{item.source || item.category}</h4><p>{item.category} • {dateLabel(item.date || item.dueDate)}</p><small>{item.notes || item.paymentMethod}</small>{item.receipt && <a href={item.receipt} target="_blank" rel="noreferrer">Open receipt</a>}</div><strong>{money(item.amount)}</strong><div><button onClick={() => setData(current => ({ ...current, personalTransactions: current.personalTransactions.map(record => record.transactionId === item.transactionId ? { ...record, archived: !record.archived } : record) }))}>{item.archived ? 'Restore' : 'Archive'}</button><button className="danger" onClick={() => remove('personalTransactions', item.transactionId, 'entry')}>Delete</button></div></article>)}{!visibleTransactions.length && <EmptyDistrict title={showArchived ? 'No archived personal records' : 'No personal records'} text={showArchived ? 'Archived entries will remain available here.' : 'Starter categories are ready without fake transactions.'} />}</div></section>
     </div>}
     {section === 'Goals & Debts' && <div className="goals-debts-layout">
-      <form className="panel glass district-form" onSubmit={addDebt}><span className="district-eyebrow">Debt plan</span><h3>Add a debt balance</h3><input required placeholder="Debt name *" value={debtForm.name} onChange={event => setDebtForm({ ...debtForm, name: event.target.value })} /><input type="number" min="0" step="0.01" placeholder="Current balance" value={debtForm.balance} onChange={event => setDebtForm({ ...debtForm, balance: event.target.value })} /><input type="number" min="0" step="0.01" placeholder="Minimum payment" value={debtForm.minimumPayment} onChange={event => setDebtForm({ ...debtForm, minimumPayment: event.target.value })} /><div className="split-fields"><input type="number" min="0" step="0.01" placeholder="APR %" value={debtForm.apr} onChange={event => setDebtForm({ ...debtForm, apr: event.target.value })} /><input type="number" min="1" max="31" placeholder="Due day" value={debtForm.dueDay} onChange={event => setDebtForm({ ...debtForm, dueDay: event.target.value })} /></div><textarea placeholder="Notes" value={debtForm.notes} onChange={event => setDebtForm({ ...debtForm, notes: event.target.value })} /><button className="primary">Add debt</button></form>
+      <form className="panel glass district-form" onSubmit={addDebt}><span className="district-eyebrow">Debt plan</span><h3>Add a debt balance</h3><input required placeholder="Debt name *" value={debtForm.name} onChange={event => setDebtForm({ ...debtForm, name: event.target.value })} /><input type="number" min="0" step="0.01" placeholder="Current balance" value={debtForm.balance} onChange={event => setDebtForm({ ...debtForm, balance: event.target.value })} /><input type="number" min="0" step="0.01" placeholder="Minimum payment" value={debtForm.minimumPayment} onChange={event => setDebtForm({ ...debtForm, minimumPayment: event.target.value })} /><div className="split-fields"><input type="number" min="0" step="0.01" placeholder="APR %" value={debtForm.apr} onChange={event => setDebtForm({ ...debtForm, apr: event.target.value })} /><label>Due date<input type="date" value={debtForm.dueDate} onChange={event => setDebtForm({ ...debtForm, dueDate: event.target.value })} /></label></div><textarea placeholder="Notes" value={debtForm.notes} onChange={event => setDebtForm({ ...debtForm, notes: event.target.value })} /><button className="primary">Add debt</button></form>
       <form className="panel glass district-form" onSubmit={addGoal}><span className="district-eyebrow">Savings plan</span><h3>Add a goal or emergency fund</h3><select value={goalForm.kind} onChange={event => setGoalForm({ ...goalForm, kind: event.target.value })}>{['Savings Goal', 'Emergency Fund'].map(item => <option key={item}>{item}</option>)}</select><input required placeholder="Goal name *" value={goalForm.name} onChange={event => setGoalForm({ ...goalForm, name: event.target.value })} /><input type="number" min="0" step="0.01" placeholder="Target amount" value={goalForm.target} onChange={event => setGoalForm({ ...goalForm, target: event.target.value })} /><input type="number" min="0" step="0.01" placeholder="Starting amount" value={goalForm.current} onChange={event => setGoalForm({ ...goalForm, current: event.target.value })} /><input type="date" value={goalForm.targetDate} onChange={event => setGoalForm({ ...goalForm, targetDate: event.target.value })} /><textarea placeholder="Notes" value={goalForm.notes} onChange={event => setGoalForm({ ...goalForm, notes: event.target.value })} /><button className="primary">Add savings goal</button></form>
       <section className="goal-debt-cards">{data.personalDebts.filter(item => !item.archived).map(debt => {
         const paid = transactions.filter(item => item.debtId === debt.id && item.status !== 'Unpaid').reduce((sum, item) => sum + number(item.amount), 0);

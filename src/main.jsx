@@ -33,6 +33,7 @@ import {
   Phase5DashboardCards,
   PresentationMode,
 } from './presentationWorkspace.jsx';
+import { lessonForTopic } from './localLessons.js';
 
 const STORAGE_KEY = 'tierraFleurCommandCenterV1';
 
@@ -409,9 +410,15 @@ function App() {
   const [searchOpen, setSearchOpen] = useState(false);
   const [focusedProjectId, setFocusedProjectId] = useState('');
   const [presentationRequest, setPresentationRequest] = useState(null);
+  const [storageError, setStorageError] = useState('');
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+      setStorageError('');
+    } catch {
+      setStorageError('This device could not save the latest change. Export a backup, remove unneeded large attachments, and try again.');
+    }
   }, [data]);
 
   useEffect(() => {
@@ -509,6 +516,7 @@ function App() {
       <UniversalSearch open={searchOpen} onClose={() => setSearchOpen(false)} data={data} navigate={nav} openProject={openProject} openDesign={openDesign} />
 
       <main className="main-content">
+        {storageError && <div className="storage-error" role="alert"><strong>Changes are not persisting.</strong><span>{storageError}</span></div>}
         {view === 'dashboard' && <Dashboard data={data} nav={nav} openProject={openProject} openDesign={openDesign} weather={weather} refreshWeather={refreshWeather} />}
         {view === 'clients' && <ClientDistrict data={data} setData={setData} openProject={openProject} />}
         {view === 'projects' && <ProjectDistrict data={data} setData={setData} initialProjectId={focusedProjectId} openDesign={openDesign} openClients={() => nav('clients')} openEstimates={() => nav('estimates')} openFinance={() => nav('finance')} openPresentation={openPresentation} />}
@@ -578,7 +586,7 @@ function Dashboard({ data, nav, openProject, openDesign, weather, refreshWeather
             ['Create an estimate', 'Build a professional client quote', 'estimates'],
             ['Plan a project', 'Track scope, dates, and status', 'projects'],
             ['Plant Sourcing', 'Search trusted growers and suppliers', 'plant-sourcing'],
-            ['Start a live lesson', 'Fresh business and design learning', 'learning'],
+            ['Open a built-in lesson', 'Business and design learning without an API key', 'learning'],
           ].map(([title, text, target]) => <button key={title} onClick={() => nav(target)}><strong>{title}</strong><span>{text}</span></button>)}
         </div>
       </div>
@@ -1225,29 +1233,19 @@ function LearningCenter({ learning, setLearning }) {
   const [topic, setTopic] = useState('Pricing & Profit');
   const [level, setLevel] = useState(learning.preferences?.level || 'Growing');
   const [lesson, setLesson] = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
   const [answer, setAnswer] = useState('');
   const [feedback, setFeedback] = useState('');
 
-  const recentTitles = (learning.history || []).slice(0, 12).map(x => x.title);
-
-  const getLesson = async () => {
-    setLoading(true); setError(''); setAnswer(''); setFeedback('');
-    try {
-      const res = await fetch('/.netlify/functions/live-learning', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ topic, level, recentTitles, business: 'Tierra Fleur Designs', location: 'Delaware, USA' })
-      });
-      if (!res.ok) throw new Error('Live lesson service is unavailable.');
-      const next = await res.json();
-      if (!next?.title || !next?.lesson) throw new Error('The lesson response was incomplete.');
-      const record = { ...next, id: crypto.randomUUID(), topic, level, createdAt: new Date().toISOString() };
-      setLesson(record);
-      setLearning({ ...learning, preferences: { ...(learning.preferences || {}), level }, history: [record, ...(learning.history || [])].slice(0, 50) });
-    } catch (err) {
-      setError(err.message || 'Could not load a fresh lesson.');
-    } finally { setLoading(false); }
+  const getLesson = () => {
+    setAnswer('');
+    setFeedback('');
+    const record = { ...lessonForTopic(topic, level), createdAt: new Date().toISOString() };
+    setLesson(record);
+    setLearning({
+      ...learning,
+      preferences: { ...(learning.preferences || {}), level },
+      history: [record, ...(learning.history || []).filter(item => item.id !== record.id)].slice(0, 50),
+    });
   };
 
   const checkAnswer = () => {
@@ -1265,15 +1263,15 @@ function LearningCenter({ learning, setLearning }) {
   };
 
   return <div className="page">
-    <SectionTitle eyebrow="Fresh, adaptive education" title="Live Learning Center" text="Each lesson is created from current information, your chosen focus, and your recent lesson history so the app does not recycle the same material with different wording." />
+    <SectionTitle eyebrow="Practical education" title="Learning Center" text="Built-in Tierra Fleur business and design lessons work locally without an API key or paid service." />
     <section className="learning-intro glass">
       <div>
         <span className="eyebrow">Tierra Fleur Academy</span>
         <h3>Learn what helps the business now.</h3>
-        <p>The live engine searches for current information, then creates one focused lesson, a real-world Tierra Fleur example, and a knowledge check. Your recent lesson titles are excluded from the next request.</p>
+        <p>Choose a topic and depth to open a focused built-in lesson, a Tierra Fleur example, practical steps, and a knowledge check.</p>
       </div>
       <div className="learning-stats">
-        <div><strong>{learning.history?.length || 0}</strong><span>Lessons generated</span></div>
+        <div><strong>{learning.history?.length || 0}</strong><span>Lessons opened</span></div>
         <div><strong>{learning.completed?.length || 0}</strong><span>Completed</span></div>
       </div>
     </section>
@@ -1289,10 +1287,8 @@ function LearningCenter({ learning, setLearning }) {
           {['Foundation','Growing','Advanced'].map(x => <option key={x}>{x}</option>)}
         </select>
       </label>
-      <button className="primary" onClick={getLesson} disabled={loading}>{loading ? 'Building a fresh lesson…' : 'Generate new live lesson'}</button>
+      <button className="primary" onClick={getLesson}>Open built-in lesson</button>
     </section>
-
-    {error && <div className="viz-error panel glass"><strong>Live lesson could not load.</strong><p>{error}</p><small>On Netlify, add OPENAI_API_KEY in Site configuration → Environment variables.</small></div>}
 
     {lesson && <article className="lesson-card glass">
       <div className="lesson-meta"><span>{lesson.topic}</span><span>{lesson.level}</span><span>{lesson.freshness || 'Current lesson'}</span></div>
@@ -1305,7 +1301,7 @@ function LearningCenter({ learning, setLearning }) {
       {lesson.sources?.length > 0 && <div className="lesson-sources"><strong>Current sources used</strong>{lesson.sources.map((s,i) => <a key={i} href={s.url} target="_blank" rel="noreferrer">{s.title || s.url}</a>)}</div>}
     </article>}
 
-    {!lesson && <section className="learning-empty glass"><h3>No recycled lesson carousel.</h3><p>Choose a topic and the app will build a new lesson when you ask for one. It remembers recent lessons so it can move forward instead of circling the same information.</p></section>}
+    {!lesson && <section className="learning-empty glass"><h3>Lessons are ready offline.</h3><p>Choose a topic and open its built-in lesson. Progress and recent lesson history remain saved with the rest of the app data.</p></section>}
 
     {(learning.history || []).length > 0 && <section className="panel glass"><h3>Recent learning history</h3><div className="history-list">{learning.history.slice(0,8).map(item => <button key={item.id} onClick={() => setLesson(item)}><strong>{item.title}</strong><span>{new Date(item.createdAt).toLocaleDateString()} • {item.topic}</span></button>)}</div></section>}
   </div>;

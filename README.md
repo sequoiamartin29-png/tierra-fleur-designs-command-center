@@ -17,7 +17,7 @@ A separate iPad-friendly business app for Tierra Fleur Designs. This is independ
 - Installable PWA shell for iPad
 - Uploaded estate image used as a full-screen wrapped background
 - Official Tierra Fleur Designs crest placed prominently in the header and dashboard
-- Live adaptive Learning Center with fresh web-grounded lessons and duplicate avoidance
+- Built-in Learning Center with local business and design lessons
 
 ## Run in Codex or VS Code
 
@@ -58,11 +58,6 @@ This starter version stores business data in the browser on the current device. 
 7. Add email sending for estimates and invoices.
 
 
-## Live Learning Center setup
+## Learning Center
 
-The Learning Center uses a Netlify Function so your API key is never exposed in the browser. In Netlify, open **Site configuration → Environment variables** and add:
-
-- `OPENAI_API_KEY` — your OpenAI API key
-- `OPENAI_MODEL` — optional; defaults to `gpt-5-mini`
-
-The function uses the OpenAI Responses API with web search. It sends recent lesson titles with every request and explicitly rejects repeated or lightly reworded lessons. Lesson history and completion progress are saved on the device with the rest of the business data.
+The Learning Center uses built-in local lessons and does not require an API key or paid service. Lesson history and completion progress are saved on the device with the rest of the business data.

@@ -3,6 +3,7 @@ import './designDistrict.css';
 import { addTimelineEvent, upsertProjectPlant } from './projectEngine.js';
 import { InteractiveDesignStudio } from './designStudioWorkspace.jsx';
 import { createCanvasSettings, createDefaultDesignLayers, createDesignObject } from './designEngine.js';
+import { prepareProjectPhoto, PROJECT_PHOTO_ACCEPT } from './imageStorage.js';
 
 const DESIGN_TABS = [
   'Overview',
@@ -280,7 +281,8 @@ function PropertyOverview({ data, project, openProject, openSketch, setTab }) {
 function SitePhotos({ data, setData, projectId }) {
   const blank = { stage: 'Before', caption: '', photoDate: today(), tags: '' };
   const [form, setForm] = useState(blank);
-  const [file, setFile] = useState(null);
+  const [upload, setUpload] = useState(null);
+  const [photoLoading, setPhotoLoading] = useState(false);
   const [filter, setFilter] = useState('All');
   const [preview, setPreview] = useState(null);
   const [editingId, setEditingId] = useState('');
@@ -289,14 +291,32 @@ function SitePhotos({ data, setData, projectId }) {
     .filter(item => item.projectId === projectId && !item.archived)
     .filter(item => filter === 'All' || item.stage === filter)
     .sort((a, b) => String(b.photoDate || b.createdAt).localeCompare(String(a.photoDate || a.createdAt)));
-  const savePhoto = async event => {
+  const selectPhoto = async file => {
+    if (!file) return;
+    setPhotoLoading(true);
+    setPhotoError('');
+    try {
+      const prepared = await prepareProjectPhoto(file);
+      setUpload({ ...prepared, projectId });
+    } catch (error) {
+      setUpload(null);
+      setPhotoError(error instanceof Error ? error.message : 'The photo could not be prepared.');
+    } finally {
+      setPhotoLoading(false);
+    }
+  };
+  const savePhoto = event => {
     event.preventDefault();
-    if (!file && !editingId) {
+    if (!upload && !editingId) {
       setPhotoError('Choose a property photo to upload.');
       return;
     }
+    if (upload && upload.projectId !== projectId) {
+      setUpload(null);
+      setPhotoError('The active project changed. Choose the photo again so it is linked correctly.');
+      return;
+    }
     const formElement = event.currentTarget;
-    const upload = file ? await fileAsData(file) : null;
     if (editingId) {
       setData(current => ({ ...current, projectPhotos: current.projectPhotos.map(item => item.id === editingId ? {
         ...item,
@@ -306,11 +326,14 @@ function SitePhotos({ data, setData, projectId }) {
         tags: form.tags.split(',').map(value => value.trim()).filter(Boolean),
         image: upload?.data || item.image,
         fileName: upload?.name || item.fileName,
+        imageType: upload?.type || item.imageType,
+        width: upload?.width || item.width,
+        height: upload?.height || item.height,
         updatedAt: now(),
       } : item) }));
       setEditingId('');
       setForm(blank);
-      setFile(null);
+      setUpload(null);
       setPhotoError('');
       formElement.reset();
       return;
@@ -325,6 +348,9 @@ function SitePhotos({ data, setData, projectId }) {
       tags: form.tags.split(',').map(value => value.trim()).filter(Boolean),
       image: upload.data,
       fileName: upload.name,
+      imageType: upload.type,
+      width: upload.width,
+      height: upload.height,
       createdAt: now(),
       archived: false,
     };
@@ -338,20 +364,20 @@ function SitePhotos({ data, setData, projectId }) {
       automatic: true,
     }));
     setForm(blank);
-    setFile(null);
+    setUpload(null);
     setPhotoError('');
     formElement.reset();
   };
   const editPhoto = photo => {
     setEditingId(photo.id);
     setForm({ stage: photo.stage, caption: photo.caption || '', photoDate: photo.photoDate || today(), tags: (photo.tags || []).join(', ') });
-    setFile(null);
+    setUpload(null);
     setPhotoError('');
   };
   const cancelEdit = () => {
     setEditingId('');
     setForm(blank);
-    setFile(null);
+    setUpload(null);
     setPhotoError('');
   };
   const archive = photo => {
@@ -372,7 +398,9 @@ function SitePhotos({ data, setData, projectId }) {
       <label>Photo date<input required type="date" value={form.photoDate} onChange={event => setForm({ ...form, photoDate: event.target.value })} /></label>
       <label>Caption<input placeholder="Photo caption" value={form.caption} onChange={event => setForm({ ...form, caption: event.target.value })} /></label>
       <label>Tags<input placeholder="Tags, separated by commas" value={form.tags} onChange={event => setForm({ ...form, tags: event.target.value })} /></label>
-      <label className="design-file-button">{editingId ? 'Replace photo (optional)' : 'Choose photo'}<input type="file" accept="image/*" onChange={event => { setFile(event.target.files?.[0] || null); setPhotoError(''); }} /></label>
+      <div className="design-photo-source-actions"><label className="design-file-button">Take Photo<input type="file" accept={PROJECT_PHOTO_ACCEPT} capture="environment" onChange={event => { selectPhoto(event.target.files?.[0]); event.target.value = ''; }} /></label><label className="design-file-button">{editingId ? 'Replace Photo' : 'Upload Photo'}<input type="file" accept={PROJECT_PHOTO_ACCEPT} onChange={event => { selectPhoto(event.target.files?.[0]); event.target.value = ''; }} /></label></div>
+      {photoLoading && <div className="design-photo-status" role="status">Preparing photo preview…</div>}
+      {upload && <div className="design-selected-photo"><img src={upload.data} alt="Selected property photo preview" /><div><strong>Preview ready</strong><span>{upload.name} · {upload.width} × {upload.height}</span><button type="button" onClick={() => setUpload(null)}>Cancel selection</button></div></div>}
       <div className="design-photo-form-actions">{editingId && <button type="button" onClick={cancelEdit}>Cancel edit</button>}<button className="primary">{editingId ? 'Save photo changes' : 'Save to gallery'}</button></div>
       {photoError && <div className="design-photo-error" role="alert">{photoError}</div>}
     </form>
