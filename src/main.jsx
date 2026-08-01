@@ -34,6 +34,10 @@ import {
   PresentationMode,
 } from './presentationWorkspace.jsx';
 import { lessonForTopic } from './localLessons.js';
+import { LearningWorkspace } from './learningWorkspace.jsx';
+import { createFeaturePackStarter, migrateFeaturePackData } from './summaryModels.js';
+import { CalendarDashboardCards, CalendarDistrict } from './calendarDistrict.jsx';
+import { createCalendarStarter, migrateCalendarData } from './calendarEngine.js';
 
 const STORAGE_KEY = 'tierraFleurCommandCenterV1';
 
@@ -324,8 +328,10 @@ const starter = {
   ...createDesignStudioStarter(),
   ...createProjectEngineStarter(),
   ...createPresentationStarter(),
+  ...createFeaturePackStarter(),
+  ...createCalendarStarter(),
   notes: '',
-  learning: { history: [], completed: [], preferences: { level: 'Growing', focus: 'Business + Design' } },
+  learning: { history: [], completed: [], preferences: { level: 'Growing', focus: 'Business + Design' }, myLessons: [] },
 };
 
 function normalizeData(saved = {}) {
@@ -369,6 +375,8 @@ function normalizeData(saved = {}) {
     plantPassports: projectEngineData.plantPassports,
     estimates: districtData.estimates,
   });
+  const featurePackData = migrateFeaturePackData(saved, { personalTransactions: districtData.personalTransactions });
+  const calendarData = migrateCalendarData(saved);
   return {
     ...starter,
     ...saved,
@@ -377,6 +385,8 @@ function normalizeData(saved = {}) {
     ...designStudioData,
     ...projectEngineData,
     ...presentationData,
+    ...featurePackData,
+    ...calendarData,
     nurseries: migratedNurseries,
     plantSourcingVersion: 1,
   };
@@ -409,6 +419,7 @@ function App() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [focusedProjectId, setFocusedProjectId] = useState('');
+  const [focusedCalendarEventId, setFocusedCalendarEventId] = useState('');
   const [presentationRequest, setPresentationRequest] = useState(null);
   const [storageError, setStorageError] = useState('');
 
@@ -430,12 +441,14 @@ function App() {
   const update = (key, value) => setData(prev => ({ ...prev, [key]: value }));
   const nav = (next, options = {}) => {
     if (['projects', 'design', 'sketch'].includes(next) && !options.keepProject) setFocusedProjectId('');
+    if (next === 'calendar' && !options.keepCalendar) setFocusedCalendarEventId('');
     setView(next);
     setMenuOpen(false);
   };
   const openProject = projectId => { setFocusedProjectId(projectId); nav('projects', { keepProject: true }); };
   const openDesign = projectId => { setFocusedProjectId(projectId); nav('design', { keepProject: true }); };
   const openSketch = projectId => { setFocusedProjectId(projectId); nav('sketch', { keepProject: true }); };
+  const openCalendar = eventId => { setFocusedCalendarEventId(eventId || ''); nav('calendar', { keepCalendar: true }); };
   const openPresentation = request => {
     setFocusedProjectId(request.projectId);
     setPresentationRequest(request);
@@ -494,6 +507,7 @@ function App() {
         <nav>
           {[
             ['dashboard', '⌂', 'Dashboard'],
+            ['calendar', '◷', 'Calendar District'],
             ['clients', '♙', 'Client District'],
             ['projects', '✦', 'Project District'],
             ['design', '✎', 'Design District'],
@@ -513,11 +527,12 @@ function App() {
         </nav>
       </aside>
 
-      <UniversalSearch open={searchOpen} onClose={() => setSearchOpen(false)} data={data} navigate={nav} openProject={openProject} openDesign={openDesign} />
+      <UniversalSearch open={searchOpen} onClose={() => setSearchOpen(false)} data={data} navigate={nav} openProject={openProject} openDesign={openDesign} openCalendar={openCalendar} />
 
       <main className="main-content">
         {storageError && <div className="storage-error" role="alert"><strong>Changes are not persisting.</strong><span>{storageError}</span></div>}
-        {view === 'dashboard' && <Dashboard data={data} nav={nav} openProject={openProject} openDesign={openDesign} weather={weather} refreshWeather={refreshWeather} />}
+        {view === 'dashboard' && <Dashboard data={data} nav={nav} openProject={openProject} openDesign={openDesign} openCalendar={openCalendar} weather={weather} refreshWeather={refreshWeather} />}
+        {view === 'calendar' && <CalendarDistrict data={data} setData={setData} initialEventId={focusedCalendarEventId} navigate={nav} openProject={openProject} />}
         {view === 'clients' && <ClientDistrict data={data} setData={setData} openProject={openProject} />}
         {view === 'projects' && <ProjectDistrict data={data} setData={setData} initialProjectId={focusedProjectId} openDesign={openDesign} openClients={() => nav('clients')} openEstimates={() => nav('estimates')} openFinance={() => nav('finance')} openPresentation={openPresentation} />}
         {view === 'design' && <DesignDistrict data={data} setData={setData} initialProjectId={focusedProjectId} openProject={openProject} openProjectDistrict={() => nav('projects')} openSketch={openSketch} openPresentation={openPresentation} />}
@@ -528,7 +543,7 @@ function App() {
         {view === 'tasks' && <Tasks items={data.tasks} setItems={v => update('tasks', v)} />}
         {view === 'services' && <Services items={data.services} setItems={v => update('services', v)} />}
         {view === 'plant-sourcing' && <PlantSourcingDirectory items={data.nurseries} setItems={v => update('nurseries', v)} />}
-        {view === 'learning' && <LearningCenter learning={data.learning || starter.learning} setLearning={v => update('learning', v)} />}
+        {view === 'learning' && <LearningWorkspace learning={data.learning || starter.learning} setLearning={v => update('learning', v)} />}
         {view === 'settings' && <Settings data={data} setData={setData} />}
       </main>
     </div>
@@ -539,7 +554,7 @@ function SectionTitle({ eyebrow, title, text, action }) {
   return <div className="section-title"><div><span>{eyebrow}</span><h2>{title}</h2><p>{text}</p></div>{action}</div>;
 }
 
-function Dashboard({ data, nav, openProject, openDesign, weather, refreshWeather }) {
+function Dashboard({ data, nav, openProject, openDesign, openCalendar, weather, refreshWeather }) {
   const revenue = data.estimates.filter(x => x.status === 'Paid').reduce((sum, x) => sum + Number(x.total || 0), 0);
   const expenses = data.expenses.reduce((sum, x) => sum + Number(x.amount || 0), 0);
   const openProjects = data.projects.filter(x => x.status !== 'Completed').length;
@@ -569,6 +584,8 @@ function Dashboard({ data, nav, openProject, openDesign, weather, refreshWeather
       <Stat label="Open tasks" value={dueTasks} note="Needs attention" />
     </section>
 
+    <CalendarDashboardCards data={data} openCalendar={openCalendar} />
+
     <Phase4DashboardCards data={data} openProject={openProject} />
 
     <Phase5DashboardCards data={data} openProject={openProject} />
@@ -581,12 +598,13 @@ function Dashboard({ data, nav, openProject, openDesign, weather, refreshWeather
         <div className="quick-grid">
           {[
             ['Design District', 'Concepts, palettes, photos, and plans', 'design'],
+            ['Calendar District', 'Shifts, school, and personal commitments', 'calendar'],
             ['Finance District', 'Personal and Tierra Fleur ledgers', 'finance'],
             ['Record an expense', 'Attach and store a receipt', 'money'],
             ['Create an estimate', 'Build a professional client quote', 'estimates'],
             ['Plan a project', 'Track scope, dates, and status', 'projects'],
             ['Plant Sourcing', 'Search trusted growers and suppliers', 'plant-sourcing'],
-            ['Open a built-in lesson', 'Business and design learning without an API key', 'learning'],
+            ['Open a built-in lesson', 'Free local business and design learning', 'learning'],
           ].map(([title, text, target]) => <button key={title} onClick={() => nav(target)}><strong>{title}</strong><span>{text}</span></button>)}
         </div>
       </div>
@@ -1263,7 +1281,7 @@ function LearningCenter({ learning, setLearning }) {
   };
 
   return <div className="page">
-    <SectionTitle eyebrow="Practical education" title="Learning Center" text="Built-in Tierra Fleur business and design lessons work locally without an API key or paid service." />
+    <SectionTitle eyebrow="Practical education" title="Learning Center" text="Built-in Tierra Fleur business and design lessons work entirely from local data." />
     <section className="learning-intro glass">
       <div>
         <span className="eyebrow">Tierra Fleur Academy</span>

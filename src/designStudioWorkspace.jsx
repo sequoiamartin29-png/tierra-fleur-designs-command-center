@@ -450,7 +450,7 @@ function MiniVersionScene({ version, photos }) {
   return <div className="mini-version-scene"><DesignScene objects={snapshot.objects} layers={snapshot.layers} settings={snapshot.canvasSettings} photos={photos} compact clientSafe={false} /></div>;
 }
 
-function VersionPanel({ data, setData, project, concept, draft, versions, restoreVersion, openPresentation }) {
+function VersionPanel({ data, setData, project, concept, draft, versions, restoreVersion, openPresentation, independent = false }) {
   const [name, setName] = useState('');
   const [revisionNotes, setRevisionNotes] = useState('');
   const saveVersion = () => {
@@ -501,7 +501,7 @@ function VersionPanel({ data, setData, project, concept, draft, versions, restor
           updatedAt: now(),
         } : item),
       };
-      if (['Recommended', 'Client Selected', 'Approved'].includes(status)) {
+      if (!independent && ['Recommended', 'Client Selected', 'Approved'].includes(status)) {
         next.designConcepts = next.designConcepts.map(item => item.designId === concept.designId ? {
           ...item,
           status: status === 'Approved' ? 'Approved' : item.status,
@@ -513,7 +513,7 @@ function VersionPanel({ data, setData, project, concept, draft, versions, restor
         } : item);
         next.presentationSettings = next.presentationSettings.map(item => item.projectId === project.projectId ? { ...item, selectedDesignVersionId: version.versionId, updatedAt: now() } : item);
       }
-      if (status === 'Approved') {
+      if (!independent && status === 'Approved') {
         const approvalId = uid('approval');
         next.approvalRecords = [{
           id: approvalId,
@@ -553,7 +553,7 @@ function VersionPanel({ data, setData, project, concept, draft, versions, restor
       <MiniVersionScene version={version} photos={data.projectPhotos.filter(item => item.projectId === project.projectId && active(item))} />
       <div><span>{version.status}</span><h4>{version.name}</h4><p>{version.revisionNotes || 'No revision note'}</p><small>{dateLabel(version.createdAt)}</small></div>
       <label>Status<select value={version.status} onChange={event => setStatus(version, event.target.value)}>{DESIGN_STATUS_OPTIONS.map(item => <option key={item}>{item}</option>)}</select></label>
-      <div className="version-actions"><button type="button" onClick={() => restoreVersion(version)}>Restore to workspace</button><button type="button" onClick={() => rename(version)}>Rename</button><button type="button" onClick={() => duplicate(version)}>Duplicate as revision</button>{['Recommended', 'Client Selected', 'Approved'].includes(version.status) && <button type="button" onClick={() => openPresentation?.({ projectId: project.projectId, mode: 'preview' })}>Presentation preview</button>}</div>
+      <div className="version-actions"><button type="button" onClick={() => restoreVersion(version)}>Restore to workspace</button><button type="button" onClick={() => rename(version)}>Rename</button><button type="button" onClick={() => duplicate(version)}>Duplicate as revision</button>{!independent && ['Recommended', 'Client Selected', 'Approved'].includes(version.status) && <button type="button" onClick={() => openPresentation?.({ projectId: project.projectId, mode: 'preview' })}>Presentation preview</button>}</div>
     </article>)}{!versions.length && <div className="management-empty">No versions saved yet. The live canvas remains auto-saved, and named versions create durable comparison points.</div>}</div>
   </section>;
 }
@@ -909,7 +909,7 @@ function TemplatePanel({ templates, applyTemplate }) {
   </section>;
 }
 
-export function InteractiveDesignStudio({ data, setData, project, concept, duplicateConcept, openPresentation }) {
+export function InteractiveDesignStudio({ data, setData, project, concept, duplicateConcept, openPresentation, independent = false }) {
   const conceptId = concept.designId;
   const clientId = project.clientId || '';
   const initialDraft = useCallback(() => ({
@@ -976,6 +976,7 @@ export function InteractiveDesignStudio({ data, setData, project, concept, dupli
       designLayers: [...current.designLayers.filter(item => item.conceptId !== conceptId), ...snapshot.layers],
       designCanvasSettings: [...current.designCanvasSettings.filter(item => item.conceptId !== conceptId), settings],
       designConcepts: current.designConcepts.map(item => item.designId === conceptId ? { ...item, updatedAt: savedAt } : item),
+      independentDesigns: (current.independentDesigns || []).map(item => item.designId === conceptId ? { ...item, updatedAt: savedAt } : item),
     }));
     setDirty(false);
     setSaveState(manual ? 'Saved now' : 'Auto-saved');
@@ -1359,7 +1360,7 @@ export function InteractiveDesignStudio({ data, setData, project, concept, dupli
     return () => window.removeEventListener('keydown', handler);
   }, [selected, undo, redo, deleteSelected, duplicateSelected, patchLocalObject]);
 
-  const managementPanels = ['Versions', 'Compare', 'Plant Sync', 'Estimate Review', 'Legends & Costs', 'Notes', 'Templates', 'Export'];
+  const managementPanels = independent ? ['Versions', 'Compare', 'Notes', 'Templates', 'Export'] : ['Versions', 'Compare', 'Plant Sync', 'Estimate Review', 'Legends & Costs', 'Notes', 'Templates', 'Export'];
   const costs = designCostSummary(data, project.projectId, draft.objects);
   const saveConsultationRevision = () => {
     const record = createDesignVersion({
@@ -1379,8 +1380,8 @@ export function InteractiveDesignStudio({ data, setData, project, concept, dupli
   };
   return <div className={`interactive-design-studio${consultation ? ' consultation-mode' : ''}`}>
     <header className="interactive-studio-header glass">
-      <div><span>Phase 6 · Interactive Design Studio</span><h3>{concept.name}</h3><p>{concept.description || 'Visual landscape planning workspace'}</p></div>
-      <div className="studio-save-cluster"><span className={`save-status ${dirty ? 'saving' : 'saved'}`} role="status">{saveState}</span><button type="button" onClick={() => persist(true)}>Save now</button><button type="button" onClick={() => setConsultation(true)}>Live Consultation</button></div>
+      <div><span>{independent ? 'Independent Design · Interactive Studio' : 'Phase 6 · Interactive Design Studio'}</span><h3>{concept.name}</h3><p>{concept.description || 'Visual landscape planning workspace'}</p></div>
+      <div className="studio-save-cluster"><span className={`save-status ${dirty ? 'saving' : 'saved'}`} role="status">{saveState}</span><button type="button" onClick={() => persist(true)}>Save now</button>{!independent && <button type="button" onClick={() => setConsultation(true)}>Live Consultation</button>}</div>
     </header>
     <WorkspaceToolbar tool={tool} setTool={setTool} undo={undo} redo={redo} canUndo={history.length > 0} canRedo={future.length > 0} zoom={draft.settings.viewportZoom} setZoom={value => updateSettings({ viewportZoom: value }, 'Canvas zoomed')} consultation={consultation} />
     <QuickAddControls tool={tool} draft={draft} data={data} project={project} quick={quick} setQuick={setQuick} />
@@ -1425,7 +1426,7 @@ export function InteractiveDesignStudio({ data, setData, project, concept, dupli
     </div>}
     {!consultation && <>
       <nav className="studio-management-tabs" aria-label="Design workspace records">{managementPanels.map(item => <button type="button" key={item} className={panel === item ? 'active' : ''} onClick={() => setPanel(item)}>{item}</button>)}</nav>
-      {panel === 'Versions' && <VersionPanel data={data} setData={setData} project={project} concept={concept} draft={draft} versions={versions} restoreVersion={restoreVersion} openPresentation={openPresentation} />}
+      {panel === 'Versions' && <VersionPanel data={data} setData={setData} project={project} concept={concept} draft={draft} versions={versions} restoreVersion={restoreVersion} openPresentation={openPresentation} independent={independent} />}
       {panel === 'Compare' && <ComparePanel versions={versions} photos={photos} />}
       {panel === 'Plant Sync' && <SyncPanel data={data} setData={setData} project={project} concept={concept} objects={draft.objects} patchLocalObject={patchLocalObject} />}
       {panel === 'Estimate Review' && <EstimateReviewPanel data={data} setData={setData} project={project} objects={draft.objects} patchLocalObject={patchLocalObject} />}

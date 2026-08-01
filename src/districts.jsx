@@ -14,6 +14,7 @@ import {
 } from './presentationEngine.js';
 import { PresentationBuilder } from './presentationWorkspace.jsx';
 import { prepareProjectPhoto, PROJECT_PHOTO_ACCEPT } from './imageStorage.js';
+import { PersonalFinanceWorkspace } from './personalFinanceWorkspace.jsx';
 
 export const PERSONAL_CATEGORIES = [
   'Job Income',
@@ -226,7 +227,7 @@ function EmptyDistrict({ title, text }) {
   return <div className="district-empty"><span aria-hidden="true">❦</span><strong>{title}</strong><p>{text}</p></div>;
 }
 
-export function UniversalSearch({ open, onClose, data, navigate, openProject, openDesign }) {
+export function UniversalSearch({ open, onClose, data, navigate, openProject, openDesign, openCalendar }) {
   const [query, setQuery] = useState('');
   useEffect(() => { if (!open) setQuery(''); }, [open]);
   const groups = useMemo(() => {
@@ -331,6 +332,38 @@ export function UniversalSearch({ open, onClose, data, navigate, openProject, op
       ...item,
       action: () => item.projectId ? openDesign(item.projectId) : navigate('design'),
     }));
+    const independentDesigns = (data.independentDesigns || []).filter(item => match(item.name, item.description, item.notes, item.independentDesignId, item.projectId)).slice(0, 8).map(item => ({
+      id: item.independentDesignId,
+      title: item.name,
+      detail: `Independent Design${item.projectId ? ` · Linked to ${item.projectId}` : ' · Standalone'}`,
+      action: () => navigate('design'),
+    }));
+    const myLessons = (data.learning?.myLessons || []).filter(item => match(item.title, item.topic, item.skillLevel, item.keyTerms, item.introduction, item.content, item.steps, item.personalNotes)).slice(0, 8).map(item => ({
+      id: item.lessonId,
+      title: item.title,
+      detail: `${item.topic} · ${item.skillLevel} · My Lesson`,
+      action: () => navigate('learning'),
+    }));
+    const calendarJobMap = new Map((data.calendarJobs || []).map(item => [item.jobId, item]));
+    const calendarCourseMap = new Map((data.calendarCourses || []).map(item => [item.courseId, item]));
+    const calendarEvents = (data.calendarEvents || []).filter(item => {
+      const job = calendarJobMap.get(item.jobId);
+      const course = calendarCourseMap.get(item.courseId);
+      return match(item.title, item.eventType, item.schoolEventType, item.date, item.dueDate, item.notes, item.location, item.jobName, job?.jobName, job?.employer, job?.roleTitle, item.courseName, item.courseCode, course?.courseName, course?.courseCode, course?.instructor);
+    }).slice(0, 12).map(item => {
+      const job = calendarJobMap.get(item.jobId);
+      const course = calendarCourseMap.get(item.courseId);
+      return {
+        id: item.calendarEventId,
+        title: item.title,
+        detail: [item.eventType, item.date || item.dueDate, job?.jobName || course?.courseCode || course?.courseName].filter(Boolean).join(' · '),
+        action: () => openCalendar ? openCalendar(item.calendarEventId) : navigate('calendar'),
+      };
+    });
+    const calendarLibraries = [
+      ...(data.calendarJobs || []).filter(item => match(item.jobName, item.employer, item.roleTitle, item.notes)).map(item => ({ id: item.jobId, title: item.jobName, detail: `${item.employer || 'Job'} · Calendar job`, action: () => navigate('calendar') })),
+      ...(data.calendarCourses || []).filter(item => match(item.courseName, item.courseCode, item.instructor, item.notes)).map(item => ({ id: item.courseId, title: item.courseName, detail: `${item.courseCode || 'Course'} · Calendar course`, action: () => navigate('calendar') })),
+    ].slice(0, 8);
     const livingProjectRecords = [
       ...(data.projectPlants || []).filter(item => match(item.plantName, item.scientificName, item.category, item.installationLocation, item.status, item.notes, item.warrantyExpiration)).map(item => ({
         id: item.projectPlantId,
@@ -413,11 +446,15 @@ export function UniversalSearch({ open, onClose, data, navigate, openProject, op
       ['Project District · Living Project Records', livingProjectRecords],
       ['Project District · Client Presentations', presentationRecords],
       ['Design District', designRecords],
+      ['Design District · Independent Designs', independentDesigns],
       ['Plant Sourcing District', nurseries],
       ['Finance District', transactions],
       ['Finance District · Estimates & Invoices', documents],
+      ['Learning District · My Lessons', myLessons],
+      ['Calendar District · Events', calendarEvents],
+      ['Calendar District · Jobs & Courses', calendarLibraries],
     ].filter(([, items]) => items.length);
-  }, [query, data, navigate, openProject, openDesign]);
+  }, [query, data, navigate, openProject, openDesign, openCalendar]);
   if (!open) return null;
   return <div className="universal-search-backdrop" role="presentation" onMouseDown={event => event.target === event.currentTarget && onClose()}>
     <section className="universal-search glass" role="dialog" aria-modal="true" aria-label="Search all districts">
@@ -425,9 +462,9 @@ export function UniversalSearch({ open, onClose, data, navigate, openProject, op
         <div><span>Estate-wide finder</span><h2>Search every District</h2></div>
         <button onClick={onClose} aria-label="Close search">×</button>
       </div>
-      <input autoFocus type="search" value={query} onChange={event => setQuery(event.target.value)} placeholder="Client, project, concept, plant, photo, invoice, receipt, or notes…" />
+      <input autoFocus type="search" value={query} onChange={event => setQuery(event.target.value)} placeholder="Client, project, shift, course, assignment, plant, invoice, or notes…" />
       {!query && <p className="universal-search-hint">Search is grouped by District and never sends your private records anywhere.</p>}
-      {query && !groups.length && <EmptyDistrict title="No records found" text="Try a name, address, project ID, plant, receipt, or note." />}
+      {query && !groups.length && <EmptyDistrict title="No records found" text="Try a name, date, job, course, project ID, plant, receipt, or note." />}
       <div className="universal-results">{groups.map(([district, items]) => <section key={district}>
         <h3>{district}</h3>
         {items.map(item => <button key={item.id} onClick={() => { item.action(); onClose(); }}><strong>{item.title}</strong><span>{item.detail || 'Open record'}</span></button>)}
@@ -451,7 +488,7 @@ export function ClientDistrict({ data, setData, openProject }) {
   const patch = (clientId, changes) => setData(current => ({ ...current, clients: current.clients.map(client => client.clientId === clientId ? { ...client, ...changes } : client) }));
   const remove = client => {
     const linked = data.projects.filter(project => project.clientId === client.clientId).length;
-    if (/^Codex Phase [45] Test/.test(client.name) && linked === 0) {
+    if (/^Codex (?:Phase [456]|Summary) Test/.test(client.name) && linked === 0) {
       setData(current => ({ ...current, clients: current.clients.filter(item => item.clientId !== client.clientId) }));
       return;
     }
@@ -637,7 +674,7 @@ export function ProjectDistrict({ data, setData, initialProjectId, openDesign, o
   const confirmDeleteProject = () => {
     const project = deleteCandidate;
     if (!project) return;
-    const isTemporaryTest = /^Codex Phase [456] Test/.test(project.name);
+    const isTemporaryTest = /^Codex (?:Phase [456]|Summary) Test/.test(project.name);
     setData(current => {
       if (!isTemporaryTest) return { ...current, projects: current.projects.filter(item => item.projectId !== project.projectId) };
       const projectId = project.projectId;
@@ -795,7 +832,7 @@ export function ProjectDistrict({ data, setData, initialProjectId, openDesign, o
           <label className="wide">Project notes<textarea value={selected.notes} onChange={event => patchProject({ notes: event.target.value })} /></label>
         </div>
         <div className="project-danger-row"><button onClick={() => archiveProject(selected)}>Archive project</button><button className="danger" onClick={() => deleteProject(selected)}>Delete project</button></div>
-        {deleteCandidate?.projectId === selected.projectId && <div className="project-form-summary" role="alert"><strong>{/^Codex Phase [45] Test/.test(selected.name) ? 'Remove this temporary test project and only its connected test records?' : 'Permanently delete this project record?'}</strong><p>{/^Codex Phase [45] Test/.test(selected.name) ? 'The temporary client will remain until it is removed separately from Client District.' : 'Connected financial and sourcing records will remain in their Districts.'}</p><div className="project-danger-row"><button onClick={() => setDeleteCandidate(null)}>Cancel</button><button className="danger" onClick={confirmDeleteProject}>Permanently delete project</button></div></div>}
+        {deleteCandidate?.projectId === selected.projectId && <div className="project-form-summary" role="alert"><strong>{/^Codex (?:Phase [456]|Summary) Test/.test(selected.name) ? 'Remove this temporary test project and only its connected test records?' : 'Permanently delete this project record?'}</strong><p>{/^Codex (?:Phase [456]|Summary) Test/.test(selected.name) ? 'The temporary client will remain until it is removed separately from Client District.' : 'Connected financial and sourcing records will remain in their Districts.'}</p><div className="project-danger-row"><button onClick={() => setDeleteCandidate(null)}>Cancel</button><button className="danger" onClick={confirmDeleteProject}>Permanently delete project</button></div></div>}
       </section>}
 
       {tab === 'Client Proposal' && <PresentationBuilder data={data} setData={setData} project={selected} onPresent={openPresentation} />}
@@ -1121,7 +1158,7 @@ export function FinanceDistrict({ data, setData, openProject }) {
       </button>
     </section>
     {!destination && <section className="finance-landing-note glass"><span aria-hidden="true">✦</span><div><h3>Two ledgers. A clear garden wall between them.</h3><p>Personal and business records use separate storage collections, calculations, filters, totals, and CSV exports. Both are included in the existing Tierra Fleur JSON backup and restore.</p></div></section>}
-    {destination === 'personal' && <PersonalFinance data={data} setData={setData} />}
+    {destination === 'personal' && <PersonalFinanceWorkspace data={data} setData={setData} />}
     {destination === 'business' && <BusinessFinance data={data} setData={setData} openProject={openProject} />}
   </div>;
 }

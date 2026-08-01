@@ -181,14 +181,15 @@ function projectActivity(data, projectId) {
 
 export function DesignDashboardCards({ data, openDesign }) {
   const activeProjects = data.projects.filter(project => !project.archived);
-  const activeConcepts = data.designConcepts.filter(concept => !concept.archived);
-  const versions = (data.designVersions || []).filter(item => !item.archived);
-  const projectFor = record => activeProjects.find(project => project.projectId === record?.projectId);
+  const standaloneIds = new Set((data.independentDesigns || []).filter(item => !item.projectId).map(item => item.independentDesignId));
+  const activeConcepts = data.designConcepts.filter(concept => !concept.archived && !standaloneIds.has(concept.independentDesignId));
+  const activeConceptIds = new Set(activeConcepts.map(item => item.designId));
+  const versions = (data.designVersions || []).filter(item => !item.archived && activeConceptIds.has(item.conceptId));
   const inProgress = activeConcepts.filter(item => ['Draft', 'Internal Review', 'Designing'].includes(item.status));
   const ready = versions.filter(item => ['Ready to Present', 'Recommended'].includes(item.status));
   const awaitingRevision = versions.filter(item => item.status === 'Needs Revision');
   const approved = versions.filter(item => item.status === 'Approved');
-  const unlinkedPlants = (data.designObjects || []).filter(item => !item.archived && item.objectType === 'plant' && !item.relatedProjectPlantId);
+  const unlinkedPlants = (data.designObjects || []).filter(item => !item.archived && activeConceptIds.has(item.conceptId) && item.objectType === 'plant' && !item.relatedProjectPlantId);
   const missingEstimate = activeConcepts.filter(concept => {
     const placed = (data.designObjects || []).some(item => item.conceptId === concept.designId && !item.archived && ['plant', 'material'].includes(item.objectType));
     return placed && !data.estimates.some(item => item.projectId === concept.projectId && !item.archived);
@@ -209,11 +210,65 @@ export function DesignDashboardCards({ data, openDesign }) {
   </section>;
 }
 
-function DesignLanding({ data, selectProject, openProjectDistrict }) {
+function DesignLanding({ data, setData, selectProject, selectIndependent, openProjectDistrict }) {
+  const [independentForm, setIndependentForm] = useState({ name: '', description: '' });
+  const [showArchivedIndependent, setShowArchivedIndependent] = useState(false);
+  const [pendingDeleteId, setPendingDeleteId] = useState('');
   const projects = data.projects.filter(project => !project.archived);
-  const concepts = data.designConcepts.filter(item => !item.archived);
+  const concepts = data.designConcepts.filter(item => !item.archived && (!item.independentDesignId || (data.independentDesigns || []).some(record => record.independentDesignId === item.independentDesignId && record.projectId)));
+  const independentDesigns = (data.independentDesigns || []).filter(item => showArchivedIndependent ? item.archived : !item.archived);
   const awaiting = concepts.filter(item => ['Client Review', 'Awaiting Approval'].includes(item.status)).length;
   const recent = [...concepts].sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt))).slice(0, 4);
+  const createIndependent = event => {
+    event.preventDefault();
+    if (!independentForm.name.trim()) return;
+    const independentDesignId = uid('independent-design');
+    const designId = uid('design');
+    const createdAt = now();
+    const concept = {
+      id: designId,
+      designId,
+      independentDesignId,
+      projectId: independentDesignId,
+      clientId: '',
+      name: independentForm.name.trim(),
+      description: independentForm.description.trim(),
+      status: 'Draft',
+      createdAt,
+      updatedAt: createdAt,
+      notes: { general: '', clientRequests: '', maintenance: '', futureIdeas: '' },
+      revisionHistory: [{ id: uid('revision'), date: createdAt, note: 'Independent Design created' }],
+      canvas: emptyCanvas(),
+      archived: false,
+    };
+    const record = { id: independentDesignId, independentDesignId, designId, name: concept.name, description: concept.description, notes: '', backgroundKind: 'Cream garden paper', clientId: '', projectId: '', linkedAt: '', createdAt, updatedAt: createdAt, archived: false };
+    const layers = createDefaultDesignLayers({ projectId: independentDesignId, clientId: '', conceptId: designId });
+    const settings = createCanvasSettings({ projectId: independentDesignId, clientId: '', conceptId: designId });
+    setData(current => ({ ...current, independentDesigns: [record, ...(current.independentDesigns || [])], designConcepts: [concept, ...current.designConcepts], designLayers: [...layers, ...current.designLayers], designCanvasSettings: [settings, ...current.designCanvasSettings] }));
+    setIndependentForm({ name: '', description: '' });
+    selectIndependent(independentDesignId);
+  };
+  const setIndependentArchive = (record, archived) => {
+    setPendingDeleteId('');
+    setData(current => ({ ...current, independentDesigns: current.independentDesigns.map(item => item.independentDesignId === record.independentDesignId ? { ...item, archived, updatedAt: now() } : item), designConcepts: current.designConcepts.map(item => item.designId === record.designId ? { ...item, archived, updatedAt: now() } : item) }));
+  };
+  const removeIndependent = record => {
+    if (pendingDeleteId !== record.independentDesignId) { setPendingDeleteId(record.independentDesignId); return; }
+    setData(current => ({
+      ...current,
+      independentDesigns: current.independentDesigns.filter(item => item.independentDesignId !== record.independentDesignId),
+      designConcepts: current.designConcepts.filter(item => item.designId !== record.designId),
+      designObjects: (current.designObjects || []).filter(item => item.conceptId !== record.designId),
+      designLayers: (current.designLayers || []).filter(item => item.conceptId !== record.designId),
+      designCanvasSettings: (current.designCanvasSettings || []).filter(item => item.conceptId !== record.designId),
+      designVersions: (current.designVersions || []).filter(item => item.conceptId !== record.designId),
+      designNotes: (current.designNotes || []).filter(item => item.conceptId !== record.designId),
+      designMeasurements: (current.designMeasurements || []).filter(item => item.conceptId !== record.designId && item.designId !== record.designId && item.projectId !== (record.projectId || record.independentDesignId)),
+      projectPhotos: current.projectPhotos.filter(item => item.independentDesignId !== record.independentDesignId && item.conceptId !== record.designId),
+      designInspirations: (current.designInspirations || []).filter(item => item.conceptId !== record.designId && item.projectId !== (record.projectId || record.independentDesignId)),
+    }));
+    setPendingDeleteId('');
+  };
   return <div className="design-landing">
     <section className="design-landing-hero glass">
       <div><span>Artist’s studio</span><h2>Design District</h2><p>Shape landscape ideas into connected project concepts, palettes, inspiration, measurements, and client-ready stories.</p></div>
@@ -223,6 +278,20 @@ function DesignLanding({ data, selectProject, openProjectDistrict }) {
         <div><strong>{concepts.length}</strong><span>Saved concepts</span></div>
         <div><strong>{awaiting}</strong><span>Concepts awaiting approval</span></div>
       </div>
+    </section>
+    <section className="independent-design-entry glass">
+      <div className="independent-entry-copy"><span>Ideas before projects</span><h3>Independent Design</h3><p>Create a complete landscape idea without choosing a client or project. Link it later without copying the design or any canvas objects.</p><div className="independent-feature-chips">{['Drawing tools', 'Plant & material markers', 'Measurements', 'Layers', 'Notes', 'Versions'].map(item => <span key={item}>{item}</span>)}</div></div>
+      <form onSubmit={createIndependent}><label>Design name<input required value={independentForm.name} onChange={event => setIndependentForm({ ...independentForm, name: event.target.value })} placeholder="Courtyard herb garden" /></label><label>Inspiration or intent<textarea value={independentForm.description} onChange={event => setIndependentForm({ ...independentForm, description: event.target.value })} placeholder="What would you like to explore?" /></label><button className="primary">Create Independent Design</button></form>
+    </section>
+    <section className="independent-design-library">
+      <div className="independent-library-heading"><div><span>Independent Design library</span><h3>{showArchivedIndependent ? 'Archived ideas' : 'Standalone and linked ideas'}</h3></div><button onClick={() => setShowArchivedIndependent(value => !value)}>{showArchivedIndependent ? 'View active' : `Archived (${(data.independentDesigns || []).filter(item => item.archived).length})`}</button></div>
+      <div>{independentDesigns.map(record => {
+        const concept = data.designConcepts.find(item => item.designId === record.designId);
+        const objectCount = (data.designObjects || []).filter(item => item.conceptId === record.designId && !item.archived).length;
+        const versionCount = (data.designVersions || []).filter(item => item.conceptId === record.designId && !item.archived).length;
+        const project = data.projects.find(item => item.projectId === record.projectId);
+        return <article className="glass independent-design-card" key={record.independentDesignId}><div><span className="independent-badge">Independent Design</span>{record.projectId && <span className="linked-badge">Linked to {record.projectId}</span>}</div><h4>{record.name}</h4><p>{record.description || 'A free-standing garden idea ready for the canvas.'}</p><dl><div><dt>Objects</dt><dd>{objectCount}</dd></div><div><dt>Versions</dt><dd>{versionCount}</dd></div><div><dt>Last edited</dt><dd>{dateLabel(record.updatedAt || concept?.updatedAt)}</dd></div></dl>{project && <small>{project.name} · canvas remains the original record</small>}<div>{record.archived ? <><button onClick={() => setIndependentArchive(record, false)}>Restore</button><button className="danger" onClick={() => removeIndependent(record)}>{pendingDeleteId === record.independentDesignId ? 'Confirm permanent delete' : 'Delete archived design'}</button></> : <><button className="primary" onClick={() => selectIndependent(record.independentDesignId)}>Open Independent Design</button><button onClick={() => setIndependentArchive(record, true)}>Archive</button></>}</div></article>;
+      })}{!independentDesigns.length && <EmptyStudio title={showArchivedIndependent ? 'No archived independent designs' : 'No Independent Designs yet'} text="Name an idea above to open the garden canvas without a client or project." />}</div>
     </section>
     <section className="design-project-gallery">
       {projects.map(project => {
@@ -278,7 +347,7 @@ function PropertyOverview({ data, project, openProject, openSketch, setTab }) {
   </div>;
 }
 
-function SitePhotos({ data, setData, projectId }) {
+function SitePhotos({ data, setData, projectId, independent = false }) {
   const blank = { stage: 'Before', caption: '', photoDate: today(), tags: '' };
   const [form, setForm] = useState(blank);
   const [upload, setUpload] = useState(null);
@@ -354,15 +423,18 @@ function SitePhotos({ data, setData, projectId }) {
       createdAt: now(),
       archived: false,
     };
-    setData(current => addTimelineEvent({ ...current, projectPhotos: [photo, ...current.projectPhotos] }, {
-      projectId,
-      eventType: 'photo.uploaded',
-      title: 'Property photo uploaded',
-      description: photo.caption || photo.fileName,
-      relatedRecordId: photo.photoId,
-      dedupeKey: `photo.uploaded:${photo.photoId}`,
-      automatic: true,
-    }));
+    setData(current => {
+      const next = { ...current, projectPhotos: [{ ...photo, independentDesignId: independent ? projectId : '' }, ...current.projectPhotos] };
+      return independent ? next : addTimelineEvent(next, {
+        projectId,
+        eventType: 'photo.uploaded',
+        title: 'Property photo uploaded',
+        description: photo.caption || photo.fileName,
+        relatedRecordId: photo.photoId,
+        dedupeKey: `photo.uploaded:${photo.photoId}`,
+        automatic: true,
+      });
+    });
     setForm(blank);
     setUpload(null);
     setPhotoError('');
@@ -957,8 +1029,75 @@ function Measurements({ data, setData, projectId }) {
   </div>;
 }
 
+function IndependentDesignWorkspace({ data, setData, record, onBack }) {
+  const [tab, setTab] = useState('Overview');
+  const [details, setDetails] = useState({ name: record.name || '', description: record.description || '', notes: record.notes || '' });
+  const [link, setLink] = useState({ clientId: record.clientId || '', projectId: record.projectId || '' });
+  const concept = data.designConcepts.find(item => item.designId === record.designId);
+  const ownerProjectId = record.projectId || record.independentDesignId;
+  const project = { projectId: ownerProjectId, clientId: record.clientId || '', name: record.name, propertyAddress: record.projectId ? data.projects.find(item => item.projectId === record.projectId)?.propertyAddress || '' : 'Independent Design', status: record.projectId ? 'Linked' : 'Independent Design' };
+  const clients = data.clients.filter(item => !item.archived);
+  const projects = data.projects.filter(item => !item.archived && (!link.clientId || item.clientId === link.clientId));
+  const objectCount = data.designObjects.filter(item => item.conceptId === record.designId && !item.archived).length;
+  const noteCount = data.designNotes.filter(item => item.conceptId === record.designId && !item.archived).length;
+  const versionCount = data.designVersions.filter(item => item.conceptId === record.designId && !item.archived).length;
+  const photoCount = data.projectPhotos.filter(item => item.projectId === ownerProjectId && !item.archived).length;
+
+  useEffect(() => setDetails({ name: record.name || '', description: record.description || '', notes: record.notes || '' }), [record.independentDesignId]);
+  if (!concept) return <div className="page"><EmptyStudio title="This Independent Design needs repair" text="The design metadata is preserved, but its canvas concept could not be found in this backup." /><button onClick={onBack}>Return to Design District</button></div>;
+
+  const saveDetails = event => {
+    event.preventDefault();
+    if (!details.name.trim()) return;
+    const updatedAt = now();
+    setData(current => ({ ...current, independentDesigns: current.independentDesigns.map(item => item.independentDesignId === record.independentDesignId ? { ...item, ...details, name: details.name.trim(), description: details.description.trim(), updatedAt } : item), designConcepts: current.designConcepts.map(item => item.designId === record.designId ? { ...item, name: details.name.trim(), description: details.description.trim(), updatedAt, revisionHistory: [{ id: uid('revision'), date: updatedAt, note: 'Independent Design details saved' }, ...(item.revisionHistory || [])] } : item) }));
+  };
+
+  const linkToProject = () => {
+    const targetProject = data.projects.find(item => item.projectId === link.projectId && !item.archived);
+    if (!targetProject || targetProject.clientId !== link.clientId) return;
+    const previousOwnerId = record.projectId || record.independentDesignId;
+    const updatedAt = now();
+    setData(current => {
+      let next = {
+        ...current,
+        independentDesigns: current.independentDesigns.map(item => item.independentDesignId === record.independentDesignId ? { ...item, clientId: targetProject.clientId, projectId: targetProject.projectId, linkedAt: updatedAt, updatedAt } : item),
+        designConcepts: current.designConcepts.map(item => item.designId === record.designId ? { ...item, clientId: targetProject.clientId, projectId: targetProject.projectId, independentDesignId: record.independentDesignId, updatedAt } : item),
+        designObjects: current.designObjects.map(item => item.conceptId === record.designId ? { ...item, clientId: targetProject.clientId, projectId: targetProject.projectId, updatedAt } : item),
+        designLayers: current.designLayers.map(item => item.conceptId === record.designId ? { ...item, clientId: targetProject.clientId, projectId: targetProject.projectId, updatedAt } : item),
+        designCanvasSettings: current.designCanvasSettings.map(item => item.conceptId === record.designId ? { ...item, clientId: targetProject.clientId, projectId: targetProject.projectId, updatedAt } : item),
+        designVersions: current.designVersions.map(item => item.conceptId === record.designId ? { ...item, clientId: targetProject.clientId, projectId: targetProject.projectId, snapshot: { ...item.snapshot, objects: (item.snapshot?.objects || []).map(object => ({ ...object, clientId: targetProject.clientId, projectId: targetProject.projectId })), layers: (item.snapshot?.layers || []).map(layer => ({ ...layer, clientId: targetProject.clientId, projectId: targetProject.projectId })), canvasSettings: item.snapshot?.canvasSettings ? { ...item.snapshot.canvasSettings, clientId: targetProject.clientId, projectId: targetProject.projectId } : item.snapshot?.canvasSettings }, updatedAt } : item),
+        designNotes: current.designNotes.map(item => item.conceptId === record.designId ? { ...item, clientId: targetProject.clientId, projectId: targetProject.projectId, updatedAt } : item),
+        designMeasurements: current.designMeasurements.map(item => item.designId === record.designId || item.projectId === previousOwnerId ? { ...item, clientId: targetProject.clientId, projectId: targetProject.projectId, updatedAt } : item),
+        projectPhotos: current.projectPhotos.map(item => item.projectId === previousOwnerId && (item.independentDesignId === record.independentDesignId || previousOwnerId === record.independentDesignId) ? { ...item, clientId: targetProject.clientId, projectId: targetProject.projectId, independentDesignId: record.independentDesignId, updatedAt } : item),
+        designInspirations: current.designInspirations.map(item => item.projectId === previousOwnerId ? { ...item, clientId: targetProject.clientId, projectId: targetProject.projectId, independentDesignId: record.independentDesignId, updatedAt } : item),
+      };
+      next = addTimelineEvent(next, { projectId: targetProject.projectId, eventType: 'design.independent.linked', title: 'Independent Design linked', description: record.name, relatedRecordId: record.designId, dedupeKey: `design.independent.linked:${record.independentDesignId}:${targetProject.projectId}`, automatic: true });
+      return next;
+    });
+    setTab('Overview');
+  };
+
+  const archive = () => {
+    if (!confirm(`Archive ${record.name}? Its canvas, objects, notes, photos, and versions will remain available for restore.`)) return;
+    setData(current => ({ ...current, independentDesigns: current.independentDesigns.map(item => item.independentDesignId === record.independentDesignId ? { ...item, archived: true, updatedAt: now() } : item), designConcepts: current.designConcepts.map(item => item.designId === record.designId ? { ...item, archived: true, updatedAt: now() } : item) }));
+    onBack();
+  };
+
+  return <div className="page design-district-page independent-design-workspace">
+    <header className="design-studio-header glass"><button onClick={onBack}>← Design District</button><div><span>Independent Design{record.projectId ? ` · Linked to ${record.projectId}` : ' · No client or project required'}</span><h2>{record.name}</h2><p>{record.projectId ? `${data.clients.find(item => item.clientId === record.clientId)?.name || 'Client'} · original canvas retained` : 'A standalone Tierra Fleur landscape idea'}</p></div><span className="design-studio-flourish" aria-hidden="true">🦋</span></header>
+    <nav className="design-studio-tabs" aria-label="Independent Design sections">{['Overview', 'Property or Inspiration Photo', 'Design Canvas'].map(item => <button key={item} className={tab === item ? 'active' : ''} onClick={() => setTab(item)}>{item}</button>)}</nav>
+    {tab === 'Overview' && <div className="independent-overview-grid"><form className="panel glass district-form" onSubmit={saveDetails}><span className="district-eyebrow">Independent Design details</span><h3>Name and notes</h3><label>Design name<input required value={details.name} onChange={event => setDetails({ ...details, name: event.target.value })} /></label><label>Design intent<textarea value={details.description} onChange={event => setDetails({ ...details, description: event.target.value })} /></label><label>Personal notes<textarea value={details.notes} onChange={event => setDetails({ ...details, notes: event.target.value })} /></label><button className="primary">Save details</button><button type="button" onClick={archive}>Archive Independent Design</button></form>
+      <section className="panel glass independent-overview-card"><span className="independent-badge">Independent Design</span><h3>{record.name}</h3><dl><div><dt>Date created</dt><dd>{dateLabel(record.createdAt)}</dd></div><div><dt>Last edited</dt><dd>{dateLabel(record.updatedAt || concept.updatedAt)}</dd></div><div><dt>Canvas objects</dt><dd>{objectCount}</dd></div><div><dt>Photos</dt><dd>{photoCount}</dd></div><div><dt>Notes</dt><dd>{noteCount}</dd></div><div><dt>Versions</dt><dd>{versionCount}</dd></div></dl><p><strong>Background:</strong> {photoCount ? 'Property or inspiration photo available' : record.backgroundKind || 'Cream garden paper placeholder'}</p></section>
+      <section className="panel glass independent-link-card"><span className="district-eyebrow">Optional future connection</span><h3>{record.projectId ? 'Linked without duplication' : 'Link to a client and project later'}</h3>{record.projectId ? <p>This original design now belongs to <strong>{record.projectId}</strong>. Its concept ID, canvas settings, layers, objects, notes, and versions were reassigned in place.</p> : <><label>Client<select value={link.clientId} onChange={event => setLink({ clientId: event.target.value, projectId: '' })}><option value="">Choose a client</option>{clients.map(item => <option key={item.clientId} value={item.clientId}>{item.name}</option>)}</select></label><label>Project<select value={link.projectId} onChange={event => setLink({ ...link, projectId: event.target.value })}><option value="">Choose that client’s project</option>{projects.map(item => <option key={item.projectId} value={item.projectId}>{item.projectId} · {item.name}</option>)}</select></label><button className="primary" disabled={!link.clientId || !link.projectId} onClick={linkToProject}>Link original design</button><small>This changes ownership fields only. It never copies the design or canvas objects.</small></>}</section></div>}
+    {tab === 'Property or Inspiration Photo' && <SitePhotos data={data} setData={setData} projectId={ownerProjectId} independent={!record.projectId} />}
+    {tab === 'Design Canvas' && <InteractiveDesignStudio key={concept.designId} data={data} setData={setData} project={project} concept={concept} independent />}
+  </div>;
+}
+
 export function DesignDistrict({ data, setData, initialProjectId = '', openProject, openProjectDistrict, openSketch, openPresentation }) {
   const [selectedId, setSelectedId] = useState(initialProjectId);
+  const [selectedIndependentId, setSelectedIndependentId] = useState('');
   const [tab, setTab] = useState('Overview');
   useEffect(() => {
     if (initialProjectId) {
@@ -966,8 +1105,10 @@ export function DesignDistrict({ data, setData, initialProjectId = '', openProje
       setTab('Overview');
     }
   }, [initialProjectId]);
+  const independentDesign = (data.independentDesigns || []).find(item => item.independentDesignId === selectedIndependentId && !item.archived);
+  if (independentDesign) return <IndependentDesignWorkspace data={data} setData={setData} record={independentDesign} onBack={() => setSelectedIndependentId('')} />;
   const project = data.projects.find(item => item.projectId === selectedId && !item.archived);
-  if (!project) return <DesignLanding data={data} openProjectDistrict={openProjectDistrict} selectProject={projectId => { setSelectedId(projectId); setTab('Overview'); }} />;
+  if (!project) return <DesignLanding data={data} setData={setData} openProjectDistrict={openProjectDistrict} selectIndependent={setSelectedIndependentId} selectProject={projectId => { setSelectedId(projectId); setTab('Overview'); }} />;
   return <div className="page design-district-page">
     <header className="design-studio-header glass">
       <button onClick={() => setSelectedId('')}>← Design District</button>
