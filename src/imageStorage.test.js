@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { dataUrlToBlob, serializeDataForStorage } from './imageStorage.js';
+import { dataUrlToBlob, prepareProjectPhotosForRuntime, serializeDataForStorage } from './imageStorage.js';
 
 test('stored photo records keep attachment references and omit runtime image payloads', () => {
   const stored = serializeDataForStorage({
@@ -43,4 +43,19 @@ test('backup image data converts back to a typed blob', async () => {
   const blob = dataUrlToBlob('data:image/jpeg;base64,dGllcnJhLWZsZXVy');
   assert.equal(blob.type, 'image/jpeg');
   assert.equal(await blob.text(), 'tierra-fleur');
+});
+
+test('missing IndexedDB preserves photo records and reports a recoverable error', async () => {
+  const photo = {
+    id: 'photo-idb-unavailable',
+    photoId: 'site-photo-idb-unavailable',
+    imageAttachmentId: 'project-photo:site-photo-idb-unavailable:display',
+    originalImageAttachmentId: 'project-photo:site-photo-idb-unavailable:display',
+  };
+
+  const result = await prepareProjectPhotosForRuntime({ projectPhotos: [photo], designConcepts: [] });
+
+  assert.equal(result.data.projectPhotos[0].photoId, photo.photoId);
+  assert.equal(result.data.projectPhotos[0].imageAttachmentId, photo.imageAttachmentId);
+  assert.ok(result.errors.length > 0);
 });

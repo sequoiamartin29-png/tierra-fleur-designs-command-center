@@ -398,13 +398,52 @@ function normalizeData(saved = {}) {
   };
 }
 
-function loadData() {
+function loadStartupData() {
+  let raw = '';
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return starter;
-    return normalizeData(JSON.parse(raw));
-  } catch {
-    return starter;
+    raw = localStorage.getItem(STORAGE_KEY) || '';
+    return { data: raw ? normalizeData(JSON.parse(raw)) : starter, error: null, raw };
+  } catch (error) {
+    return {
+      data: null,
+      error: error instanceof Error ? error : new Error('The saved application record could not be read safely.'),
+      raw,
+    };
+  }
+}
+
+function StartupRecoveryScreen({ error, raw }) {
+  const message = error instanceof Error ? error.message : 'The application encountered an unexpected startup error.';
+  const download = () => {
+    const saved = globalThis.__TF_DOWNLOAD_RECOVERY__?.(raw);
+    if (!saved) alert('This browser blocked access to the preserved local record. No data was deleted.');
+  };
+  return <main className="startup-shell"><section className="startup-card" role="alert">
+    <span>Startup recovery</span>
+    <h1>Tierra Fleur could not finish opening.</h1>
+    <p>Your existing records remain stored on this device. Nothing was deleted, reset, or replaced, and property-photo attachments remain untouched.</p>
+    <div className="startup-actions"><button type="button" onClick={() => location.reload()}>Try opening again</button><button type="button" onClick={download}>Download preserved data</button></div>
+    <p className="startup-detail">{message}</p>
+  </section></main>;
+}
+
+class AppErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { error: null };
+  }
+
+  static getDerivedStateFromError(error) {
+    return { error };
+  }
+
+  componentDidCatch(error, info) {
+    console.error('Tierra Fleur stopped during application startup or rendering.', error, info);
+  }
+
+  render() {
+    if (this.state.error) return <StartupRecoveryScreen error={this.state.error} />;
+    return this.props.children;
   }
 }
 
@@ -418,7 +457,8 @@ function formatDate(value) {
 }
 
 function App() {
-  const [data, setData] = useState(loadData);
+  const [startup] = useState(loadStartupData);
+  const [data, setData] = useState(() => startup.data || starter);
   const [storageReady, setStorageReady] = useState(false);
   const [view, setView] = useState('dashboard');
   const [now, setNow] = useState(new Date());
@@ -429,24 +469,32 @@ function App() {
   const [focusedCalendarEventId, setFocusedCalendarEventId] = useState('');
   const [presentationRequest, setPresentationRequest] = useState(null);
   const [storageError, setStorageError] = useState('');
+  const [attachmentStorageError, setAttachmentStorageError] = useState('');
 
   useEffect(() => {
+    if (startup.error) return undefined;
     let cancelled = false;
     prepareProjectPhotosForRuntime(data).then(result => {
       if (cancelled) return;
-      if (result.errors.length) console.error('Some project photo attachments could not be prepared.', result.errors);
+      if (result.errors.length) {
+        console.error('Some project photo attachments could not be prepared.', result.errors);
+        setAttachmentStorageError('Some saved property photos could not be opened from attachment storage. Their records and attachment references were preserved.');
+      } else {
+        setAttachmentStorageError('');
+      }
       setData(result.data);
       setStorageReady(true);
     }).catch(error => {
       if (cancelled) return;
       console.error('Project photo attachment storage could not be initialized.', error);
+      setAttachmentStorageError('Property photo attachment storage is unavailable in this browser. Existing records and photo references were preserved.');
       setStorageReady(true);
     });
     return () => { cancelled = true; };
   }, []);
 
   useEffect(() => {
-    if (!storageReady) return;
+    if (!storageReady || startup.error) return;
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(serializeDataForStorage(data)));
       setStorageError('');
@@ -457,7 +505,7 @@ function App() {
 
   useEffect(() => {
     const timer = setInterval(() => setNow(new Date()), 1000);
-    if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
+    if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').then(registration => registration.update()).catch(() => {});
     return () => clearInterval(timer);
   }, []);
 
@@ -496,6 +544,8 @@ function App() {
       }
     }, () => setWeather({ status: 'Location blocked', temp: null, detail: 'Allow location access in Safari settings' }), { enableHighAccuracy: false, timeout: 10000 });
   };
+
+  if (startup.error) return <StartupRecoveryScreen error={startup.error} raw={startup.raw} />;
 
   if (!storageReady) return <div className="page"><p>Opening saved Tierra Fleur records…</p></div>;
 
@@ -556,6 +606,7 @@ function App() {
 
       <main className="main-content">
         {storageError && <div className="storage-error" role="alert"><strong>Changes are not persisting.</strong><span>{storageError}</span></div>}
+        {attachmentStorageError && <div className="storage-error" role="alert"><strong>Property photo storage needs attention.</strong><span>{attachmentStorageError}</span></div>}
         {view === 'dashboard' && <Dashboard data={data} nav={nav} openProject={openProject} openDesign={openDesign} openCalendar={openCalendar} weather={weather} refreshWeather={refreshWeather} />}
         {view === 'calendar' && <CalendarDistrict data={data} setData={setData} initialEventId={focusedCalendarEventId} navigate={nav} openProject={openProject} />}
         {view === 'clients' && <ClientDistrict data={data} setData={setData} openProject={openProject} />}
@@ -1393,4 +1444,12 @@ function Settings({ data, setData }) {
   </div>;
 }
 
-createRoot(document.getElementById('root')).render(<React.StrictMode><App /></React.StrictMode>);
+try {
+  const rootElement = document.getElementById('root');
+  if (!rootElement) throw new Error('The application root was not found.');
+  createRoot(rootElement).render(<React.StrictMode><AppErrorBoundary><App /></AppErrorBoundary></React.StrictMode>);
+  globalThis.__TF_STARTUP_READY__?.();
+} catch (error) {
+  console.error('Tierra Fleur could not mount.', error);
+  globalThis.__TF_SHOW_STARTUP_ERROR__?.(error);
+}

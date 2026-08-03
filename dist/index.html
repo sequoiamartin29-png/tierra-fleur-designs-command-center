@@ -9,10 +9,99 @@
     <meta name="apple-mobile-web-app-title" content="Tierra Fleur" />
     <link rel="manifest" href="/manifest.webmanifest" />
     <title>Tierra Fleur Designs Command Center</title>
-    <script type="module" crossorigin src="/assets/index-vV2z1xJR.js"></script>
+    <style>
+      .startup-shell{box-sizing:border-box;display:grid;min-height:100vh;place-items:center;padding:24px;background:#f4eee4;color:#31483a;font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}.startup-card{width:min(620px,100%);border:1px solid #d8cab6;border-radius:22px;padding:28px;background:#fffaf2;box-shadow:0 18px 48px rgba(50,62,49,.14)}.startup-card span{color:#8a6c40;font-size:11px;font-weight:800;letter-spacing:.13em;text-transform:uppercase}.startup-card h1{margin:8px 0 10px;font:700 30px Georgia,serif}.startup-card p{margin:0;color:#667066;line-height:1.55}.startup-actions{display:flex;flex-wrap:wrap;gap:10px;margin-top:20px}.startup-actions button{min-height:44px;border:1px solid #bda981;border-radius:12px;padding:9px 14px;background:#fff;color:#344a39;font-weight:750}.startup-actions button:first-child{background:#596b52;color:#fff}.startup-detail{margin-top:16px;color:#79534a;font-size:12px;overflow-wrap:anywhere}
+    </style>
+    <script>
+      (function () {
+        var cryptoApi = window.crypto || window.msCrypto;
+        if (cryptoApi && typeof cryptoApi.randomUUID !== 'function') {
+          var uuidFallback = function () {
+            var bytes = new Uint8Array(16);
+            if (typeof cryptoApi.getRandomValues === 'function') cryptoApi.getRandomValues(bytes);
+            else for (var index = 0; index < bytes.length; index += 1) bytes[index] = Math.floor(Math.random() * 256);
+            bytes[6] = (bytes[6] & 15) | 64;
+            bytes[8] = (bytes[8] & 63) | 128;
+            var hex = [];
+            for (var byteIndex = 0; byteIndex < bytes.length; byteIndex += 1) hex.push((bytes[byteIndex] + 256).toString(16).slice(1));
+            return hex.slice(0, 4).join('') + '-' + hex.slice(4, 6).join('') + '-' + hex.slice(6, 8).join('') + '-' + hex.slice(8, 10).join('') + '-' + hex.slice(10).join('');
+          };
+          try {
+            Object.defineProperty(cryptoApi, 'randomUUID', { configurable: true, value: uuidFallback });
+          } catch (error) {
+            try { cryptoApi.randomUUID = uuidFallback; } catch (assignmentError) { /* Startup recovery below handles this browser. */ }
+          }
+        }
+
+        var startupTimer;
+        var startupFailure;
+        window.__TF_DOWNLOAD_RECOVERY__ = function (rawValue) {
+          try {
+            var stored = typeof rawValue === 'string' ? rawValue : window.localStorage.getItem('tierraFleurCommandCenterV1');
+            var payload;
+            var fileName = 'tierra-fleur-preserved-data.json';
+            try {
+              payload = stored ? JSON.stringify(JSON.parse(stored), null, 2) : JSON.stringify({}, null, 2);
+            } catch (parseError) {
+              fileName = 'tierra-fleur-startup-recovery.json';
+              payload = JSON.stringify({
+                format: 'tierra-fleur-startup-recovery',
+                capturedAt: new Date().toISOString(),
+                storageKey: 'tierraFleurCommandCenterV1',
+                rawApplicationData: stored || ''
+              }, null, 2);
+            }
+            var link = document.createElement('a');
+            link.href = URL.createObjectURL(new Blob([payload], { type: 'application/json' }));
+            link.download = fileName;
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
+            setTimeout(function () { URL.revokeObjectURL(link.href); }, 1000);
+            return true;
+          } catch (error) {
+            return false;
+          }
+        };
+        window.__TF_STARTUP_READY__ = function () {
+          window.__TF_APP_MOUNTED__ = true;
+          clearTimeout(startupTimer);
+        };
+        window.__TF_SHOW_STARTUP_ERROR__ = function (reason) {
+          if (window.__TF_APP_MOUNTED__ || startupFailure) return;
+          startupFailure = reason || new Error('The application did not finish opening.');
+          clearTimeout(startupTimer);
+          var show = function () {
+            var root = document.getElementById('root');
+            if (!root) return;
+            var message = startupFailure && startupFailure.message ? startupFailure.message : String(startupFailure || 'Unknown startup error');
+            root.innerHTML = '<main class="startup-shell"><section class="startup-card" role="alert"><span>Startup recovery</span><h1>Tierra Fleur could not finish opening.</h1><p>Your saved records have not been deleted or reset. Property-photo attachments remain untouched in device storage. You can reload the app or download the preserved local record before troubleshooting.</p><div class="startup-actions"><button type="button" id="startup-reload">Try opening again</button><button type="button" id="startup-backup">Download preserved data</button></div><p class="startup-detail" id="startup-detail"></p></section></main>';
+            document.getElementById('startup-detail').textContent = message;
+            document.getElementById('startup-reload').onclick = function () { window.location.reload(); };
+            document.getElementById('startup-backup').onclick = function () {
+              if (!window.__TF_DOWNLOAD_RECOVERY__()) document.getElementById('startup-detail').textContent = message + ' The browser also blocked access to the local backup.';
+            };
+          };
+          if (document.getElementById('root')) show();
+          else document.addEventListener('DOMContentLoaded', show, { once: true });
+        };
+        window.addEventListener('error', function (event) {
+          var target = event.target;
+          var asset = target && (target.src || target.href);
+          window.__TF_SHOW_STARTUP_ERROR__(event.error || new Error(event.message || (asset ? 'A required application file could not be loaded: ' + asset : 'A startup error occurred.')));
+        }, true);
+        window.addEventListener('unhandledrejection', function (event) {
+          window.__TF_SHOW_STARTUP_ERROR__(event.reason || new Error('A startup task failed.'));
+        });
+        document.addEventListener('DOMContentLoaded', function () {
+          startupTimer = setTimeout(function () { window.__TF_SHOW_STARTUP_ERROR__(new Error('The application took too long to start.')); }, 10000);
+        }, { once: true });
+      }());
+    </script>
+    <script type="module" crossorigin src="/assets/index-CLwUmpOg.js"></script>
     <link rel="stylesheet" crossorigin href="/assets/index-a0erKtRM.css">
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root"><main class="startup-shell"><section class="startup-card" aria-live="polite"><span>Tierra Fleur Designs</span><h1>Opening the Command Center…</h1><p>Preparing your saved business and design records.</p></section></main></div>
   </body>
 </html>
