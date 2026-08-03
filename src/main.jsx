@@ -38,6 +38,12 @@ import { LearningWorkspace } from './learningWorkspace.jsx';
 import { createFeaturePackStarter, migrateFeaturePackData } from './summaryModels.js';
 import { CalendarDashboardCards, CalendarDistrict } from './calendarDistrict.jsx';
 import { createCalendarStarter, migrateCalendarData } from './calendarEngine.js';
+import {
+  buildDataBackup,
+  importDataBackup,
+  prepareProjectPhotosForRuntime,
+  serializeDataForStorage,
+} from './imageStorage.js';
 
 const STORAGE_KEY = 'tierraFleurCommandCenterV1';
 
@@ -413,6 +419,7 @@ function formatDate(value) {
 
 function App() {
   const [data, setData] = useState(loadData);
+  const [storageReady, setStorageReady] = useState(false);
   const [view, setView] = useState('dashboard');
   const [now, setNow] = useState(new Date());
   const [weather, setWeather] = useState({ status: 'Tap refresh', temp: null, detail: 'Location weather' });
@@ -424,13 +431,29 @@ function App() {
   const [storageError, setStorageError] = useState('');
 
   useEffect(() => {
+    let cancelled = false;
+    prepareProjectPhotosForRuntime(data).then(result => {
+      if (cancelled) return;
+      if (result.errors.length) console.error('Some project photo attachments could not be prepared.', result.errors);
+      setData(result.data);
+      setStorageReady(true);
+    }).catch(error => {
+      if (cancelled) return;
+      console.error('Project photo attachment storage could not be initialized.', error);
+      setStorageReady(true);
+    });
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    if (!storageReady) return;
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(serializeDataForStorage(data)));
       setStorageError('');
     } catch {
-      setStorageError('This device could not save the latest change. Export a backup, remove unneeded large attachments, and try again.');
+      setStorageError('This device could not save the latest record change. Your existing records have not been erased. Export a backup and try again.');
     }
-  }, [data]);
+  }, [data, storageReady]);
 
   useEffect(() => {
     const timer = setInterval(() => setNow(new Date()), 1000);
@@ -473,6 +496,8 @@ function App() {
       }
     }, () => setWeather({ status: 'Location blocked', temp: null, detail: 'Allow location access in Safari settings' }), { enableHighAccuracy: false, timeout: 10000 });
   };
+
+  if (!storageReady) return <div className="page"><p>Opening saved Tierra Fleur records…</p></div>;
 
   if (presentationRequest) return <PresentationMode data={data} setData={setData} request={presentationRequest} onExit={() => setPresentationRequest(null)} />;
 
@@ -1327,12 +1352,43 @@ function LearningCenter({ learning, setLearning }) {
 
 function Settings({ data, setData }) {
   const b = data.business;
+  const [backupBusy, setBackupBusy] = useState(false);
   const setB = patch => setData(prev => ({ ...prev, business: { ...prev.business, ...patch } }));
-  const exportData = () => { const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }); const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'tierra-fleur-backup.json'; a.click(); URL.revokeObjectURL(a.href); };
-  const importData = e => { const file = e.target.files?.[0]; if (!file) return; const r = new FileReader(); r.onload = () => { try { setData(normalizeData(JSON.parse(r.result))); } catch { alert('That backup file could not be read.'); } }; r.readAsText(file); };
+  const exportData = async () => {
+    setBackupBusy(true);
+    try {
+      const backup = await buildDataBackup(data);
+      const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'tierra-fleur-backup.json';
+      a.click();
+      URL.revokeObjectURL(a.href);
+    } catch (error) {
+      alert(error instanceof Error ? error.message : 'The backup could not be created. No records were changed.');
+    } finally {
+      setBackupBusy(false);
+    }
+  };
+  const importData = async event => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    setBackupBusy(true);
+    try {
+      const saved = await importDataBackup(JSON.parse(await file.text()));
+      const restored = await prepareProjectPhotosForRuntime(normalizeData(saved));
+      if (restored.errors.length) throw new Error('The backup records were read, but one or more property photo attachments could not be restored. Your current records were not replaced.');
+      setData(restored.data);
+    } catch (error) {
+      alert(error instanceof Error ? error.message : 'That backup file could not be read.');
+    } finally {
+      event.target.value = '';
+      setBackupBusy(false);
+    }
+  };
   return <div className="page"><SectionTitle eyebrow="Administration" title="Business Settings" text="Personalize documents and keep a portable backup of your business records." />
     <div className="two-column"><div className="panel glass form-grid"><h3>Business profile</h3><input value={b.name} onChange={e => setB({ name: e.target.value })} /><input value={b.tagline} onChange={e => setB({ tagline: e.target.value })} /><input placeholder="Business email" value={b.email} onChange={e => setB({ email: e.target.value })} /><input placeholder="Business phone" value={b.phone} onChange={e => setB({ phone: e.target.value })} /><input placeholder="Business website" value={b.website || ''} onChange={e => setB({ website: e.target.value })} /><input placeholder="Mailing address" value={b.address} onChange={e => setB({ address: e.target.value })} /><label>Default tax rate %<input type="number" step="0.01" value={b.defaultTax} onChange={e => setB({ defaultTax: e.target.value })} /></label></div>
-      <div className="panel glass form-grid"><h3>Data backup</h3><p>Export regularly, especially before major code updates or moving the app to a new device.</p><button className="primary" onClick={exportData}>Export business backup</button><label className="upload-button">Import backup<input type="file" accept="application/json" onChange={importData} /></label><button className="danger" onClick={() => { if (confirm('Erase all Tierra Fleur app data on this device?')) { localStorage.removeItem(STORAGE_KEY); location.reload(); } }}>Erase local data</button></div>
+      <div className="panel glass form-grid"><h3>Data backup</h3><p>Export regularly, especially before major code updates or moving the app to a new device. Property photo attachments are included.</p><button className="primary" disabled={backupBusy} onClick={exportData}>{backupBusy ? 'Preparing records…' : 'Export business backup'}</button><label className="upload-button">Import backup<input type="file" accept="application/json" disabled={backupBusy} onChange={importData} /></label><button className="danger" onClick={() => { if (confirm('Erase all Tierra Fleur app data on this device?')) { localStorage.removeItem(STORAGE_KEY); location.reload(); } }}>Erase local data</button></div>
     </div>
   </div>;
 }

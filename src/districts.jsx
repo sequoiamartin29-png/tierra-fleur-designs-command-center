@@ -13,7 +13,13 @@ import {
   createPresentationSettings,
 } from './presentationEngine.js';
 import { PresentationBuilder } from './presentationWorkspace.jsx';
-import { prepareProjectPhoto, PROJECT_PHOTO_ACCEPT } from './imageStorage.js';
+import {
+  prepareProjectPhoto,
+  PROJECT_PHOTO_ACCEPT,
+  releasePreparedProjectPhoto,
+  removeProjectPhotoAttachments,
+  storePreparedProjectPhoto,
+} from './imageStorage.js';
 import { PersonalFinanceWorkspace } from './personalFinanceWorkspace.jsx';
 
 export const PERSONAL_CATEGORIES = [
@@ -292,6 +298,9 @@ export function UniversalSearch({ open, onClose, data, navigate, openProject, op
         title: item.label || `${item.objectType} object`,
         detail: `${item.objectType} • Canvas object`,
       })),
+      ...(data.designAreas || []).filter(item => match(item.purpose, item.material, item.selectionType, item.area, item.unit)).map(item => ({ id: item.designAreaId, projectId: item.projectId, title: item.material || item.purpose || 'Design area', detail: `${item.selectionType} • Manual design area` })),
+      ...(data.designMaterialDrafts || []).filter(item => match(item.name, item.material, item.supplier, item.notes, item.status)).map(item => ({ id: item.designMaterialId, projectId: item.projectId, title: item.material || item.name, detail: `${item.status} • Design material draft` })),
+      ...(data.designElementLibrary || []).filter(item => match(item.name, item.commonName, item.botanicalName, item.category)).map(item => ({ id: item.designElementId, projectId: '', title: item.name, detail: `${item.category} • Local design element` })),
       ...(data.designTemplates || []).filter(item => match(item.name, item.description)).map(item => ({
         id: item.templateId,
         projectId: '',
@@ -488,7 +497,7 @@ export function ClientDistrict({ data, setData, openProject }) {
   const patch = (clientId, changes) => setData(current => ({ ...current, clients: current.clients.map(client => client.clientId === clientId ? { ...client, ...changes } : client) }));
   const remove = client => {
     const linked = data.projects.filter(project => project.clientId === client.clientId).length;
-    if (/^Codex (?:Phase [456]|Summary) Test/.test(client.name) && linked === 0) {
+    if (/^Codex (?:Phase [456]|Summary|Manual Design) Test/.test(client.name) && linked === 0) {
       setData(current => ({ ...current, clients: current.clients.filter(item => item.clientId !== client.clientId) }));
       return;
     }
@@ -674,7 +683,8 @@ export function ProjectDistrict({ data, setData, initialProjectId, openDesign, o
   const confirmDeleteProject = () => {
     const project = deleteCandidate;
     if (!project) return;
-    const isTemporaryTest = /^Codex (?:Phase [456]|Summary) Test/.test(project.name);
+    const isTemporaryTest = /^Codex (?:Phase [456]|Summary|Manual Design) Test/.test(project.name);
+    const temporaryPhotos = isTemporaryTest ? data.projectPhotos.filter(item => item.projectId === project.projectId) : [];
     setData(current => {
       if (!isTemporaryTest) return { ...current, projects: current.projects.filter(item => item.projectId !== project.projectId) };
       const projectId = project.projectId;
@@ -699,6 +709,10 @@ export function ProjectDistrict({ data, setData, initialProjectId, openDesign, o
         designCanvasSettings: current.designCanvasSettings.filter(item => item.projectId !== projectId),
         designVersions: current.designVersions.filter(item => item.projectId !== projectId),
         designNotes: current.designNotes.filter(item => item.projectId !== projectId),
+        designAreas: current.designAreas.filter(item => item.projectId !== projectId),
+        designMasks: current.designMasks.filter(item => item.projectId !== projectId),
+        designMaterialDrafts: current.designMaterialDrafts.filter(item => item.projectId !== projectId),
+        projectMaterials: current.projectMaterials.filter(item => item.projectId !== projectId),
         designLegendSettings: current.designLegendSettings.filter(item => item.projectId !== projectId),
         designExportSettings: current.designExportSettings.filter(item => item.projectId !== projectId),
         businessTransactions: current.businessTransactions.filter(item => item.projectId !== projectId),
@@ -715,6 +729,7 @@ export function ProjectDistrict({ data, setData, initialProjectId, openDesign, o
         addOnInterestRecords: current.addOnInterestRecords.filter(item => item.projectId !== projectId),
       };
     });
+    temporaryPhotos.forEach(photo => removeProjectPhotoAttachments(photo).catch(error => console.error('A temporary test photo attachment could not be removed.', error)));
     setDeleteCandidate(null);
     setSelectedId('');
   };
@@ -735,6 +750,8 @@ export function ProjectDistrict({ data, setData, initialProjectId, openDesign, o
   };
   const selectPhoto = async file => {
     if (!file) return;
+    releasePreparedProjectPhoto(photoDraft);
+    setPhotoDraft(null);
     setPhotoLoading(true);
     setPhotoError('');
     try {
@@ -748,10 +765,11 @@ export function ProjectDistrict({ data, setData, initialProjectId, openDesign, o
     }
   };
   const cancelPhoto = () => {
+    releasePreparedProjectPhoto(photoDraft);
     setPhotoDraft(null);
     setPhotoError('');
   };
-  const addPhoto = () => {
+  const addPhoto = async () => {
     if (!photoDraft) {
       setPhotoError('Take or upload a photo, then preview it before saving.');
       return;
@@ -762,7 +780,16 @@ export function ProjectDistrict({ data, setData, initialProjectId, openDesign, o
       return;
     }
     const id = uid('photo');
-    setData(current => addTimelineEvent({ ...current, projectPhotos: [{ id, photoId: id, projectId: selectedId, stage: photoStage, caption: photoCaption.trim(), image: photoDraft.data, fileName: photoDraft.name, imageType: photoDraft.type, width: photoDraft.width, height: photoDraft.height, createdAt: new Date().toISOString(), archived: false }, ...current.projectPhotos] }, {
+    setPhotoLoading(true);
+    let storedImage;
+    try {
+      storedImage = await storePreparedProjectPhoto(id, photoDraft);
+    } catch (error) {
+      setPhotoError(error instanceof Error ? error.message : 'The property photo could not be saved to this device.');
+      setPhotoLoading(false);
+      return;
+    }
+    setData(current => addTimelineEvent({ ...current, projectPhotos: [{ id, photoId: id, projectId: selectedId, stage: photoStage, caption: photoCaption.trim(), ...storedImage, originalName: photoDraft.originalName, originalType: photoDraft.originalType, originalSize: photoDraft.originalSize, originalWidth: photoDraft.originalWidth, originalHeight: photoDraft.originalHeight, fileName: photoDraft.name, imageType: photoDraft.type, width: photoDraft.width, height: photoDraft.height, clientVisible: true, presentationVisible: true, safeForPresentation: true, createdAt: new Date().toISOString(), archived: false }, ...current.projectPhotos] }, {
       projectId: selectedId,
       eventType: 'photo.uploaded',
       title: 'Property photo uploaded',
@@ -772,8 +799,10 @@ export function ProjectDistrict({ data, setData, initialProjectId, openDesign, o
       automatic: true,
     }));
     setPhotoCaption('');
+    releasePreparedProjectPhoto(photoDraft);
     setPhotoDraft(null);
     setPhotoError('');
+    setPhotoLoading(false);
   };
   const addNote = event => {
     event.preventDefault();
@@ -795,9 +824,30 @@ export function ProjectDistrict({ data, setData, initialProjectId, openDesign, o
     }));
     setTimeline({ date: today(), title: '', detail: '' });
   };
-  const archiveRelated = (key, id) => setData(current => ({ ...current, [key]: current[key].map(item => item.id === id ? { ...item, archived: true } : item) }));
+  const photoIsDesignSource = (current, id) => {
+    const photo = current.projectPhotos.find(item => item.id === id);
+    if (!photo) return false;
+    const photoIds = new Set([photo.id, photo.photoId].filter(Boolean));
+    return current.designConcepts.some(item => photoIds.has(item.sourcePhotoId) || photoIds.has(item.originalPhoto))
+      || current.designCanvasSettings.some(item => photoIds.has(item.backgroundPhotoId));
+  };
+  const archiveRelated = (key, id) => {
+    if (key === 'projectPhotos' && photoIsDesignSource(data, id)) {
+      alert('This photo is the protected original source for a saved design. Choose a different design background before archiving it.');
+      return;
+    }
+    setData(current => ({ ...current, [key]: current[key].map(item => item.id === id ? { ...item, archived: true } : item) }));
+  };
   const deleteRelated = (key, id, label) => {
-    if (confirm(`Permanently delete this ${label}?`)) setData(current => ({ ...current, [key]: current[key].filter(item => item.id !== id) }));
+    if (key === 'projectPhotos' && photoIsDesignSource(data, id)) {
+      alert('This photo is the protected original source for a saved design and cannot be deleted.');
+      return;
+    }
+    if (confirm(`Permanently delete this ${label}?`)) {
+      const photo = key === 'projectPhotos' ? data.projectPhotos.find(item => item.id === id) : null;
+      setData(current => ({ ...current, [key]: current[key].filter(item => item.id !== id) }));
+      if (photo) removeProjectPhotoAttachments(photo).catch(error => console.error('The deleted photo attachment could not be removed.', error));
+    }
   };
 
   if (selected) {
@@ -832,7 +882,7 @@ export function ProjectDistrict({ data, setData, initialProjectId, openDesign, o
           <label className="wide">Project notes<textarea value={selected.notes} onChange={event => patchProject({ notes: event.target.value })} /></label>
         </div>
         <div className="project-danger-row"><button onClick={() => archiveProject(selected)}>Archive project</button><button className="danger" onClick={() => deleteProject(selected)}>Delete project</button></div>
-        {deleteCandidate?.projectId === selected.projectId && <div className="project-form-summary" role="alert"><strong>{/^Codex (?:Phase [456]|Summary) Test/.test(selected.name) ? 'Remove this temporary test project and only its connected test records?' : 'Permanently delete this project record?'}</strong><p>{/^Codex (?:Phase [456]|Summary) Test/.test(selected.name) ? 'The temporary client will remain until it is removed separately from Client District.' : 'Connected financial and sourcing records will remain in their Districts.'}</p><div className="project-danger-row"><button onClick={() => setDeleteCandidate(null)}>Cancel</button><button className="danger" onClick={confirmDeleteProject}>Permanently delete project</button></div></div>}
+        {deleteCandidate?.projectId === selected.projectId && <div className="project-form-summary" role="alert"><strong>{/^Codex (?:Phase [456]|Summary|Manual Design) Test/.test(selected.name) ? 'Remove this temporary test project and only its connected test records?' : 'Permanently delete this project record?'}</strong><p>{/^Codex (?:Phase [456]|Summary|Manual Design) Test/.test(selected.name) ? 'The temporary client will remain until it is removed separately from Client District.' : 'Connected financial and sourcing records will remain in their Districts.'}</p><div className="project-danger-row"><button onClick={() => setDeleteCandidate(null)}>Cancel</button><button className="danger" onClick={confirmDeleteProject}>Permanently delete project</button></div></div>}
       </section>}
 
       {tab === 'Client Proposal' && <PresentationBuilder data={data} setData={setData} project={selected} onPresent={openPresentation} />}
@@ -905,8 +955,8 @@ export function ProjectDistrict({ data, setData, initialProjectId, openDesign, o
             <label>Take Photo<input type="file" accept={PROJECT_PHOTO_ACCEPT} capture="environment" onChange={event => { selectPhoto(event.target.files?.[0]); event.target.value = ''; }} /></label>
             <label>Upload Photo<input type="file" accept={PROJECT_PHOTO_ACCEPT} onChange={event => { selectPhoto(event.target.files?.[0]); event.target.value = ''; }} /></label>
           </div>
-          {photoLoading && <div className="photo-upload-status" role="status">Preparing photo preview…</div>}
-          {photoDraft && <div className="photo-upload-preview"><img src={photoDraft.data} alt="Selected project photo preview" /><div><strong>Preview ready</strong><span>{photoDraft.name} · {photoDraft.width} × {photoDraft.height}</span><button type="button" onClick={cancelPhoto}>Cancel</button><button type="button" className="primary" onClick={addPhoto}>Save Photo</button></div></div>}
+          {photoLoading && <div className="photo-upload-status" role="status">{photoDraft ? 'Saving photo to this device…' : 'Preparing photo preview…'}</div>}
+          {photoDraft && <div className="photo-upload-preview"><img src={photoDraft.data} alt="Selected project photo preview" /><div><strong>Preview ready</strong><span>{photoDraft.name} · {photoDraft.width} × {photoDraft.height}</span><button type="button" onClick={cancelPhoto}>Cancel</button><button type="button" className="primary" disabled={photoLoading} onClick={addPhoto}>{photoLoading ? 'Saving Photo…' : 'Save Photo'}</button></div></div>}
           {photoError && <div className="photo-upload-error" role="alert"><strong>Photo could not be saved.</strong><span>{photoError}</span></div>}
         </section>
         <div className="project-photo-grid">{photos.map(photo => <article className="glass" key={photo.id}><img src={photo.image} alt={photo.caption || `${photo.stage} project photo`} /><div><span>{photo.stage}</span><p>{photo.caption || photo.fileName}</p><button onClick={() => archiveRelated('projectPhotos', photo.id)}>Archive</button><button className="danger" onClick={() => deleteRelated('projectPhotos', photo.id, 'photo')}>Delete</button></div></article>)}{!photos.length && <EmptyDistrict title="No project photos yet" text="Add before, during, and after images as the work progresses." />}</div>

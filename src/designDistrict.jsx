@@ -3,7 +3,13 @@ import './designDistrict.css';
 import { addTimelineEvent, upsertProjectPlant } from './projectEngine.js';
 import { InteractiveDesignStudio } from './designStudioWorkspace.jsx';
 import { createCanvasSettings, createDefaultDesignLayers, createDesignObject } from './designEngine.js';
-import { prepareProjectPhoto, PROJECT_PHOTO_ACCEPT } from './imageStorage.js';
+import {
+  prepareProjectPhoto,
+  PROJECT_PHOTO_ACCEPT,
+  releasePreparedProjectPhoto,
+  removeProjectPhotoAttachments,
+  storePreparedProjectPhoto,
+} from './imageStorage.js';
 
 const DESIGN_TABS = [
   'Overview',
@@ -61,6 +67,40 @@ const dateLabel = value => value
   : 'Not dated';
 const clone = value => JSON.parse(JSON.stringify(value));
 
+function duplicateDesignRecord(current, sourceDesignId) {
+  const source = current.designConcepts.find(item => item.designId === sourceDesignId);
+  if (!source) return { state: current, designId: '', independentDesignId: '', projectId: '' };
+  const sourceIndependent = (current.independentDesigns || []).find(item => item.designId === sourceDesignId);
+  const designId = uid('design');
+  const independentDesignId = sourceIndependent ? uid('independent-design') : '';
+  const projectId = sourceIndependent && !sourceIndependent.projectId ? independentDesignId : source.projectId;
+  const clientId = source.clientId || sourceIndependent?.clientId || '';
+  const createdAt = now();
+  const concept = { ...clone(source), id: designId, designId, independentDesignId, projectId, clientId, name: `${source.name} — Copy`, status: 'Draft', designStatus: 'Draft', approvalStatus: 'Not approved', versionNumber: 1, createdAt, updatedAt: createdAt, archived: false, revisionHistory: [{ id: uid('revision'), date: createdAt, note: `Duplicated from ${source.name}` }] };
+  const sourceLayers = current.designLayers.filter(item => item.conceptId === sourceDesignId);
+  const layerMap = new Map();
+  const layers = sourceLayers.map(item => { const layerId = uid('design-layer'); layerMap.set(item.layerId, layerId); return { ...clone(item), id: layerId, layerId, designLayerId: layerId, conceptId: designId, projectId, clientId, createdAt, updatedAt: createdAt }; });
+  const completeLayers = layers.length ? layers : createDefaultDesignLayers({ projectId, clientId, conceptId: designId });
+  const objectMap = new Map();
+  const areaMap = new Map();
+  const objects = current.designObjects.filter(item => item.conceptId === sourceDesignId && !item.archived).map(item => {
+    const objectId = uid('design-object');
+    objectMap.set(item.objectId, objectId);
+    const designAreaId = item.designAreaId ? uid('design-area') : '';
+    if (item.designAreaId) areaMap.set(item.designAreaId, designAreaId);
+    return createDesignObject({ ...clone(item), id: objectId, objectId, designElementId: objectId, designAreaId, conceptId: designId, projectId, clientId, layerId: layerMap.get(item.layerId) || completeLayers[0]?.layerId, groupId: item.groupId ? `${item.groupId}-${designId}` : '', legacySourceId: '', createdAt, updatedAt: createdAt });
+  });
+  const areas = (current.designAreas || []).filter(item => item.conceptId === sourceDesignId && !item.archived).map(item => { const designAreaId = areaMap.get(item.designAreaId) || uid('design-area'); return { ...clone(item), id: designAreaId, designAreaId, objectId: objectMap.get(item.objectId) || '', conceptId: designId, projectId, clientId, createdAt, updatedAt: createdAt }; });
+  const masks = (current.designMasks || []).filter(item => item.conceptId === sourceDesignId && !item.archived).map(item => { const id = uid('design-mask'); return { ...clone(item), id, designMaskId: id, targetObjectId: objectMap.get(item.targetObjectId) || '', conceptId: designId, projectId, clientId, createdAt }; });
+  const sourceSettings = current.designCanvasSettings.find(item => item.conceptId === sourceDesignId);
+  const settings = sourceSettings ? { ...clone(sourceSettings), id: `design-canvas-${designId}`, canvasSettingId: `design-canvas-${designId}`, conceptId: designId, projectId, clientId, revision: 0, updatedAt: createdAt, presentationLayerIds: (sourceSettings.presentationLayerIds || []).map(id => layerMap.get(id)).filter(Boolean) } : createCanvasSettings({ projectId, clientId, conceptId: designId });
+  const independentRecord = sourceIndependent ? { ...clone(sourceIndependent), id: independentDesignId, independentDesignId, designId, name: concept.name, projectId: sourceIndependent.projectId || '', createdAt, updatedAt: createdAt, archived: false } : null;
+  return {
+    designId, independentDesignId, projectId,
+    state: { ...current, designConcepts: [concept, ...current.designConcepts], designLayers: [...completeLayers, ...current.designLayers], designCanvasSettings: [settings, ...current.designCanvasSettings], designObjects: [...objects, ...current.designObjects], designAreas: [...areas, ...(current.designAreas || [])], designMasks: [...masks, ...(current.designMasks || [])], independentDesigns: independentRecord ? [independentRecord, ...(current.independentDesigns || [])] : current.independentDesigns },
+  };
+}
+
 function emptyCanvas() {
   return {
     zoom: 1,
@@ -103,6 +143,14 @@ export function migrateDesignData(saved = {}) {
     name: item.name || 'Untitled concept',
     description: item.description || '',
     status: item.status || 'Draft',
+    designStatus: item.designStatus || item.status || 'Draft',
+    approvalStatus: item.approvalStatus || (item.status === 'Approved' ? 'Approved' : 'Not approved'),
+    versionNumber: Math.max(1, Number(item.versionNumber || 1)),
+    clientId: item.clientId || '',
+    projectId: item.projectId || '',
+    sourcePhotoId: item.sourcePhotoId || item.canvas?.basePhotoId || '',
+    originalPhoto: item.originalPhoto || item.sourcePhotoId || item.canvas?.basePhotoId || '',
+    currentPreview: item.currentPreview || '',
     createdAt: item.createdAt || now(),
     updatedAt: item.updatedAt || item.createdAt || now(),
     notes: {
@@ -153,6 +201,10 @@ export function migrateDesignData(saved = {}) {
       stage: photo.stage === 'During' ? 'Progress' : photo.stage === 'After' ? 'Finished' : photo.stage,
       photoDate: photo.photoDate || String(photo.createdAt || '').slice(0, 10) || today(),
       tags: Array.isArray(photo.tags) ? photo.tags : String(photo.tags || '').split(',').map(value => value.trim()).filter(Boolean),
+      originalImage: photo.originalImage || photo.image || '',
+      originalName: photo.originalName || photo.fileName || '',
+      originalType: photo.originalType || photo.imageType || '',
+      originalSize: Number(photo.originalSize || 0),
     })),
   };
 }
@@ -210,6 +262,113 @@ export function DesignDashboardCards({ data, openDesign }) {
   </section>;
 }
 
+function DesignStartHub({ data, setData, selectProject, selectIndependent }) {
+  const [mode, setMode] = useState('project-photo');
+  const [form, setForm] = useState({ name: '', clientId: '', projectId: '', photoId: '', sourceDesignId: '' });
+  const projects = data.projects.filter(item => !item.archived && (!form.clientId || item.clientId === form.clientId));
+  const photos = data.projectPhotos.filter(item => !item.archived && (!form.projectId || item.projectId === form.projectId) && (!form.clientId || item.clientId === form.clientId || projects.some(project => project.projectId === item.projectId)));
+  const designs = data.designConcepts.filter(item => !item.archived);
+  const cards = [
+    ['client-photo', 'Create From Client Photo', 'Choose a client photo and connect the design now.'],
+    ['project-photo', 'Create From Project Photo', 'Start on an existing project property image.'],
+    ['independent', 'Independent Design', 'Begin without a client or project and link later.'],
+    ['continue', 'Continue Saved Design', 'Open the saved gallery and resume in place.'],
+    ['duplicate', 'Duplicate Existing Design', 'Copy a design into a new editable record.'],
+    ['history', 'Open Design History', 'Review versions, approvals, favorites, and archived work.'],
+  ];
+  const goToGallery = archived => {
+    document.getElementById('saved-design-gallery')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    if (archived) window.dispatchEvent(new CustomEvent('design-gallery-history'));
+  };
+  const submit = event => {
+    event.preventDefault();
+    if (['continue', 'history'].includes(mode)) { goToGallery(mode === 'history'); return; }
+    if (mode === 'duplicate') {
+      if (!form.sourceDesignId) return;
+      let result;
+      setData(current => { result = duplicateDesignRecord(current, form.sourceDesignId); return result.state; });
+      const source = data.designConcepts.find(item => item.designId === form.sourceDesignId);
+      const sourceIndependent = (data.independentDesigns || []).find(item => item.designId === source?.designId);
+      setTimeout(() => sourceIndependent ? selectIndependent(result?.independentDesignId || '') : selectProject(result?.projectId || source?.projectId || '', result?.designId || ''), 0);
+      return;
+    }
+    if (!form.name.trim()) return;
+    const chosenPhoto = data.projectPhotos.find(item => (item.photoId || item.id) === form.photoId || item.id === form.photoId);
+    const chosenProject = data.projects.find(item => item.projectId === form.projectId && !item.archived);
+    const designId = uid('design');
+    const independentDesignId = chosenProject ? '' : uid('independent-design');
+    const projectId = chosenProject?.projectId || independentDesignId;
+    const clientId = chosenProject?.clientId || form.clientId || '';
+    const createdAt = now();
+    const sourcePhotoId = chosenPhoto?.photoId || chosenPhoto?.id || '';
+    const concept = { id: designId, designId, independentDesignId, projectId, clientId, designName: form.name.trim(), name: form.name.trim(), description: '', sourcePhotoId, originalPhoto: sourcePhotoId, currentPreview: '', status: 'Draft', designStatus: 'Draft', approvalStatus: 'Not approved', versionNumber: 1, createdAt, updatedAt: createdAt, notes: { general: '', clientRequests: '', maintenance: '', futureIdeas: '' }, revisionHistory: [{ id: uid('revision'), date: createdAt, note: chosenPhoto ? 'Manual photo design created' : 'Independent Design created' }], canvas: { ...emptyCanvas(), basePhotoId: sourcePhotoId }, archived: false };
+    const layers = createDefaultDesignLayers({ projectId, clientId, conceptId: designId });
+    const settings = { ...createCanvasSettings({ projectId, clientId, conceptId: designId }), backgroundPhotoId: sourcePhotoId };
+    const independentRecord = independentDesignId ? { id: independentDesignId, independentDesignId, designId, name: concept.name, description: '', notes: '', backgroundKind: chosenPhoto ? 'Client photo' : 'Cream garden paper', clientId, projectId: '', linkedAt: '', createdAt, updatedAt: createdAt, archived: false } : null;
+    setData(current => ({ ...current, designConcepts: [concept, ...current.designConcepts], designLayers: [...layers, ...current.designLayers], designCanvasSettings: [settings, ...current.designCanvasSettings], independentDesigns: independentRecord ? [independentRecord, ...(current.independentDesigns || [])] : current.independentDesigns }));
+    setForm({ name: '', clientId: '', projectId: '', photoId: '', sourceDesignId: '' });
+    if (independentRecord) selectIndependent(independentDesignId); else selectProject(projectId, designId);
+  };
+  return <section className="design-start-hub glass">
+    <div className="design-start-heading"><div><span>Design District Pro</span><h3>Start a manual photo design</h3><p>Choose a starting point. Every cover, mask, plant, path, and material remains under your control.</p></div><strong>Manual editor · no AI generation</strong></div>
+    <div className="design-start-options">{cards.map(([id, title, text]) => <button type="button" key={id} className={mode === id ? 'active' : ''} onClick={() => { setMode(id); if (['continue', 'history'].includes(id)) goToGallery(id === 'history'); }}><span aria-hidden="true">{id === 'client-photo' ? '◉' : id === 'project-photo' ? '▣' : id === 'independent' ? '✦' : id === 'continue' ? '↗' : id === 'duplicate' ? '⧉' : '◷'}</span><strong>{title}</strong><small>{text}</small></button>)}</div>
+    {!['continue', 'history'].includes(mode) && <form className="design-start-form" onSubmit={submit}>
+      {mode !== 'duplicate' && <label>Design name<input required value={form.name} onChange={event => setForm({ ...form, name: event.target.value })} placeholder="Front arrival garden concept" /></label>}
+      {['client-photo', 'project-photo'].includes(mode) && <label>Client<select value={form.clientId} onChange={event => setForm({ ...form, clientId: event.target.value, projectId: '', photoId: '' })}><option value="">Choose a client</option>{data.clients.filter(item => !item.archived).map(item => <option key={item.clientId || item.id} value={item.clientId || item.id}>{item.name}</option>)}</select></label>}
+      {mode === 'project-photo' && <label>Project<select required value={form.projectId} onChange={event => setForm({ ...form, projectId: event.target.value, photoId: '' })}><option value="">Choose a project</option>{projects.map(item => <option key={item.projectId} value={item.projectId}>{item.projectId} · {item.name}</option>)}</select></label>}
+      {mode === 'client-photo' && <label>Project (optional)<select value={form.projectId} onChange={event => setForm({ ...form, projectId: event.target.value, photoId: '' })}><option value="">Keep independent for now</option>{projects.map(item => <option key={item.projectId} value={item.projectId}>{item.projectId} · {item.name}</option>)}</select></label>}
+      {['client-photo', 'project-photo'].includes(mode) && <label>Existing photo<select required value={form.photoId} onChange={event => setForm({ ...form, photoId: event.target.value })}><option value="">Choose a property photo</option>{photos.map(item => <option key={item.photoId || item.id} value={item.photoId || item.id}>{item.caption || item.fileName}</option>)}</select></label>}
+      {mode === 'duplicate' && <label>Existing design<select required value={form.sourceDesignId} onChange={event => setForm({ ...form, sourceDesignId: event.target.value })}><option value="">Choose a saved design</option>{designs.map(item => <option key={item.designId} value={item.designId}>{item.name} · {item.status}</option>)}</select></label>}
+      <button className="primary">{mode === 'duplicate' ? 'Duplicate and open' : mode === 'independent' ? 'Create Independent Design' : 'Create and open editor'}</button>
+    </form>}
+  </section>;
+}
+
+function SavedDesignGallery({ data, setData, selectProject, selectIndependent }) {
+  const [showArchived, setShowArchived] = useState(false);
+  useEffect(() => { const handler = () => setShowArchived(true); window.addEventListener('design-gallery-history', handler); return () => window.removeEventListener('design-gallery-history', handler); }, []);
+  const concepts = data.designConcepts.filter(item => showArchived ? item.archived : !item.archived).sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
+  const open = concept => {
+    const independent = (data.independentDesigns || []).find(item => item.designId === concept.designId);
+    if (independent) selectIndependent(independent.independentDesignId); else selectProject(concept.projectId, concept.designId);
+  };
+  const duplicate = concept => {
+    let result;
+    setData(current => { result = duplicateDesignRecord(current, concept.designId); return result.state; });
+    setTimeout(() => result?.independentDesignId ? selectIndependent(result.independentDesignId) : selectProject(result?.projectId || concept.projectId, result?.designId || ''), 0);
+  };
+  const patch = (concept, changes) => setData(current => ({ ...current, designConcepts: current.designConcepts.map(item => item.designId === concept.designId ? { ...item, ...changes, updatedAt: now() } : item), independentDesigns: (current.independentDesigns || []).map(item => item.designId === concept.designId ? { ...item, ...changes, updatedAt: now() } : item) }));
+  const remove = concept => {
+    if (!concept.archived || !confirm(`Permanently delete ${concept.name} and its saved design history? The source property photo and project will be preserved.`)) return;
+    setData(current => ({
+      ...current,
+      independentDesigns: (current.independentDesigns || []).filter(item => item.designId !== concept.designId),
+      designConcepts: current.designConcepts.filter(item => item.designId !== concept.designId),
+      designObjects: current.designObjects.filter(item => item.conceptId !== concept.designId),
+      designLayers: current.designLayers.filter(item => item.conceptId !== concept.designId),
+      designCanvasSettings: current.designCanvasSettings.filter(item => item.conceptId !== concept.designId),
+      designVersions: current.designVersions.filter(item => item.conceptId !== concept.designId),
+      designNotes: current.designNotes.filter(item => item.conceptId !== concept.designId),
+      designAreas: (current.designAreas || []).filter(item => item.conceptId !== concept.designId),
+      designMasks: (current.designMasks || []).filter(item => item.conceptId !== concept.designId),
+      designMaterialDrafts: (current.designMaterialDrafts || []).filter(item => item.conceptId !== concept.designId),
+      projectMaterials: (current.projectMaterials || []).filter(item => item.conceptId !== concept.designId),
+      designMeasurements: current.designMeasurements.filter(item => item.conceptId !== concept.designId && item.designId !== concept.designId),
+    }));
+  };
+  return <section id="saved-design-gallery" className="saved-design-gallery">
+    <div className="saved-gallery-heading"><div><span>Saved Design Gallery</span><h3>{showArchived ? 'Archived design history' : 'Continue a saved design'}</h3></div><button type="button" onClick={() => setShowArchived(value => !value)}>{showArchived ? 'View active' : `Archived (${data.designConcepts.filter(item => item.archived).length})`}</button></div>
+    <div className="saved-design-grid">{concepts.map(concept => {
+      const independent = (data.independentDesigns || []).find(item => item.designId === concept.designId);
+      const project = data.projects.find(item => item.projectId === concept.projectId);
+      const photo = data.projectPhotos.find(item => (item.photoId || item.id) === concept.sourcePhotoId || item.id === concept.sourcePhotoId);
+      const versions = data.designVersions.filter(item => item.conceptId === concept.designId && !item.archived);
+      const favorite = versions.some(item => item.clientSelected || item.favorite);
+      return <article className="saved-design-card glass" key={concept.designId}>{(concept.currentPreview || photo?.image) ? <img src={concept.currentPreview || photo?.image} alt="" /> : <div className="saved-design-placeholder">❦</div>}<div><span>{independent ? 'Independent' : `${project?.projectId || 'Unlinked'} · ${project?.name || 'Project'}`}</span><h4>{concept.name}</h4><small>Edited {dateLabel(concept.updatedAt)} · Version {concept.versionNumber || Math.max(1, versions.length)} · {concept.approvalStatus || concept.status}</small><div>{favorite && <b>★ Client favorite</b>}<em>{concept.status}</em></div></div><footer><button className="primary" onClick={() => open(concept)}>{concept.archived ? 'Open history' : 'Open'}</button><button onClick={() => { const value = prompt('Rename this design:', concept.name); if (value?.trim()) patch(concept, { name: value.trim(), designName: value.trim() }); }}>Rename</button><button onClick={() => duplicate(concept)}>Duplicate</button><button onClick={() => patch(concept, { archived: !concept.archived })}>{concept.archived ? 'Restore' : 'Archive'}</button>{concept.archived && <button className="danger" onClick={() => remove(concept)}>Delete</button>}</footer></article>;
+    })}{!concepts.length && <EmptyStudio title={showArchived ? 'No archived designs' : 'No saved designs yet'} text="Create a manual photo design above to begin the gallery." />}</div>
+  </section>;
+}
+
 function DesignLanding({ data, setData, selectProject, selectIndependent, openProjectDistrict }) {
   const [independentForm, setIndependentForm] = useState({ name: '', description: '' });
   const [showArchivedIndependent, setShowArchivedIndependent] = useState(false);
@@ -232,8 +391,15 @@ function DesignLanding({ data, setData, selectProject, selectIndependent, openPr
       projectId: independentDesignId,
       clientId: '',
       name: independentForm.name.trim(),
+      designName: independentForm.name.trim(),
       description: independentForm.description.trim(),
       status: 'Draft',
+      designStatus: 'Draft',
+      approvalStatus: 'Not approved',
+      versionNumber: 1,
+      sourcePhotoId: '',
+      originalPhoto: '',
+      currentPreview: '',
       createdAt,
       updatedAt: createdAt,
       notes: { general: '', clientRequests: '', maintenance: '', futureIdeas: '' },
@@ -263,6 +429,10 @@ function DesignLanding({ data, setData, selectProject, selectIndependent, openPr
       designCanvasSettings: (current.designCanvasSettings || []).filter(item => item.conceptId !== record.designId),
       designVersions: (current.designVersions || []).filter(item => item.conceptId !== record.designId),
       designNotes: (current.designNotes || []).filter(item => item.conceptId !== record.designId),
+      designAreas: (current.designAreas || []).filter(item => item.conceptId !== record.designId),
+      designMasks: (current.designMasks || []).filter(item => item.conceptId !== record.designId),
+      designMaterialDrafts: (current.designMaterialDrafts || []).filter(item => item.conceptId !== record.designId),
+      projectMaterials: (current.projectMaterials || []).filter(item => item.conceptId !== record.designId),
       designMeasurements: (current.designMeasurements || []).filter(item => item.conceptId !== record.designId && item.designId !== record.designId && item.projectId !== (record.projectId || record.independentDesignId)),
       projectPhotos: current.projectPhotos.filter(item => item.independentDesignId !== record.independentDesignId && item.conceptId !== record.designId),
       designInspirations: (current.designInspirations || []).filter(item => item.conceptId !== record.designId && item.projectId !== (record.projectId || record.independentDesignId)),
@@ -279,6 +449,7 @@ function DesignLanding({ data, setData, selectProject, selectIndependent, openPr
         <div><strong>{awaiting}</strong><span>Concepts awaiting approval</span></div>
       </div>
     </section>
+    <DesignStartHub data={data} setData={setData} selectProject={selectProject} selectIndependent={selectIndependent} />
     <section className="independent-design-entry glass">
       <div className="independent-entry-copy"><span>Ideas before projects</span><h3>Independent Design</h3><p>Create a complete landscape idea without choosing a client or project. Link it later without copying the design or any canvas objects.</p><div className="independent-feature-chips">{['Drawing tools', 'Plant & material markers', 'Measurements', 'Layers', 'Notes', 'Versions'].map(item => <span key={item}>{item}</span>)}</div></div>
       <form onSubmit={createIndependent}><label>Design name<input required value={independentForm.name} onChange={event => setIndependentForm({ ...independentForm, name: event.target.value })} placeholder="Courtyard herb garden" /></label><label>Inspiration or intent<textarea value={independentForm.description} onChange={event => setIndependentForm({ ...independentForm, description: event.target.value })} placeholder="What would you like to explore?" /></label><button className="primary">Create Independent Design</button></form>
@@ -293,6 +464,7 @@ function DesignLanding({ data, setData, selectProject, selectIndependent, openPr
         return <article className="glass independent-design-card" key={record.independentDesignId}><div><span className="independent-badge">Independent Design</span>{record.projectId && <span className="linked-badge">Linked to {record.projectId}</span>}</div><h4>{record.name}</h4><p>{record.description || 'A free-standing garden idea ready for the canvas.'}</p><dl><div><dt>Objects</dt><dd>{objectCount}</dd></div><div><dt>Versions</dt><dd>{versionCount}</dd></div><div><dt>Last edited</dt><dd>{dateLabel(record.updatedAt || concept?.updatedAt)}</dd></div></dl>{project && <small>{project.name} · canvas remains the original record</small>}<div>{record.archived ? <><button onClick={() => setIndependentArchive(record, false)}>Restore</button><button className="danger" onClick={() => removeIndependent(record)}>{pendingDeleteId === record.independentDesignId ? 'Confirm permanent delete' : 'Delete archived design'}</button></> : <><button className="primary" onClick={() => selectIndependent(record.independentDesignId)}>Open Independent Design</button><button onClick={() => setIndependentArchive(record, true)}>Archive</button></>}</div></article>;
       })}{!independentDesigns.length && <EmptyStudio title={showArchivedIndependent ? 'No archived independent designs' : 'No Independent Designs yet'} text="Name an idea above to open the garden canvas without a client or project." />}</div>
     </section>
+    <SavedDesignGallery data={data} setData={setData} selectProject={selectProject} selectIndependent={selectIndependent} />
     <section className="design-project-gallery">
       {projects.map(project => {
         const projectConcepts = concepts.filter(item => item.projectId === project.projectId);
@@ -362,6 +534,8 @@ function SitePhotos({ data, setData, projectId, independent = false }) {
     .sort((a, b) => String(b.photoDate || b.createdAt).localeCompare(String(a.photoDate || a.createdAt)));
   const selectPhoto = async file => {
     if (!file) return;
+    releasePreparedProjectPhoto(upload);
+    setUpload(null);
     setPhotoLoading(true);
     setPhotoError('');
     try {
@@ -374,7 +548,7 @@ function SitePhotos({ data, setData, projectId, independent = false }) {
       setPhotoLoading(false);
     }
   };
-  const savePhoto = event => {
+  const savePhoto = async event => {
     event.preventDefault();
     if (!upload && !editingId) {
       setPhotoError('Choose a property photo to upload.');
@@ -407,20 +581,39 @@ function SitePhotos({ data, setData, projectId, independent = false }) {
       formElement.reset();
       return;
     }
+    setPhotoLoading(true);
+    const id = uid('photo');
+    const photoId = uid('site-photo');
+    let storedImage;
+    try {
+      storedImage = await storePreparedProjectPhoto(photoId, upload);
+    } catch (error) {
+      setPhotoError(error instanceof Error ? error.message : 'The property photo could not be saved to this device.');
+      setPhotoLoading(false);
+      return;
+    }
     const photo = {
-      id: uid('photo'),
-      photoId: uid('site-photo'),
+      id,
+      photoId,
       projectId,
       stage: form.stage,
       caption: form.caption.trim(),
       photoDate: form.photoDate,
       tags: form.tags.split(',').map(value => value.trim()).filter(Boolean),
-      image: upload.data,
+      ...storedImage,
+      originalName: upload.originalName,
+      originalType: upload.originalType,
+      originalSize: upload.originalSize,
+      originalWidth: upload.originalWidth,
+      originalHeight: upload.originalHeight,
       fileName: upload.name,
       imageType: upload.type,
       width: upload.width,
       height: upload.height,
       createdAt: now(),
+      clientVisible: true,
+      presentationVisible: true,
+      safeForPresentation: true,
       archived: false,
     };
     setData(current => {
@@ -436,11 +629,14 @@ function SitePhotos({ data, setData, projectId, independent = false }) {
       });
     });
     setForm(blank);
+    releasePreparedProjectPhoto(upload);
     setUpload(null);
     setPhotoError('');
+    setPhotoLoading(false);
     formElement.reset();
   };
   const editPhoto = photo => {
+    releasePreparedProjectPhoto(upload);
     setEditingId(photo.id);
     setForm({ stage: photo.stage, caption: photo.caption || '', photoDate: photo.photoDate || today(), tags: (photo.tags || []).join(', ') });
     setUpload(null);
@@ -449,17 +645,33 @@ function SitePhotos({ data, setData, projectId, independent = false }) {
   const cancelEdit = () => {
     setEditingId('');
     setForm(blank);
+    releasePreparedProjectPhoto(upload);
     setUpload(null);
     setPhotoError('');
   };
   const archive = photo => {
+    const photoIds = new Set([photo.id, photo.photoId].filter(Boolean));
+    const isDesignSource = data.designConcepts.some(item => photoIds.has(item.sourcePhotoId) || photoIds.has(item.originalPhoto))
+      || data.designCanvasSettings.some(item => photoIds.has(item.backgroundPhotoId));
+    if (isDesignSource) {
+      alert('This photo is the protected original source for a saved design. Choose a different design background before archiving it.');
+      return;
+    }
     if (confirm(`Archive ${photo.caption || photo.fileName}?`)) {
       setData(current => ({ ...current, projectPhotos: current.projectPhotos.map(item => item.id === photo.id ? { ...item, archived: true } : item) }));
     }
   };
   const remove = photo => {
+    const photoIds = new Set([photo.id, photo.photoId].filter(Boolean));
+    const isDesignSource = data.designConcepts.some(item => photoIds.has(item.sourcePhotoId) || photoIds.has(item.originalPhoto))
+      || data.designCanvasSettings.some(item => photoIds.has(item.backgroundPhotoId));
+    if (isDesignSource) {
+      alert('This photo is the protected original source for a saved design and cannot be deleted.');
+      return;
+    }
     if (confirm(`Permanently delete ${photo.caption || photo.fileName}? This cannot be undone.`)) {
       setData(current => ({ ...current, projectPhotos: current.projectPhotos.filter(item => item.id !== photo.id) }));
+      removeProjectPhotoAttachments(photo).catch(error => console.error('The deleted photo attachment could not be removed.', error));
       if (editingId === photo.id) cancelEdit();
     }
   };
@@ -470,10 +682,10 @@ function SitePhotos({ data, setData, projectId, independent = false }) {
       <label>Photo date<input required type="date" value={form.photoDate} onChange={event => setForm({ ...form, photoDate: event.target.value })} /></label>
       <label>Caption<input placeholder="Photo caption" value={form.caption} onChange={event => setForm({ ...form, caption: event.target.value })} /></label>
       <label>Tags<input placeholder="Tags, separated by commas" value={form.tags} onChange={event => setForm({ ...form, tags: event.target.value })} /></label>
-      <div className="design-photo-source-actions"><label className="design-file-button">Take Photo<input type="file" accept={PROJECT_PHOTO_ACCEPT} capture="environment" onChange={event => { selectPhoto(event.target.files?.[0]); event.target.value = ''; }} /></label><label className="design-file-button">{editingId ? 'Replace Photo' : 'Upload Photo'}<input type="file" accept={PROJECT_PHOTO_ACCEPT} onChange={event => { selectPhoto(event.target.files?.[0]); event.target.value = ''; }} /></label></div>
-      {photoLoading && <div className="design-photo-status" role="status">Preparing photo preview…</div>}
-      {upload && <div className="design-selected-photo"><img src={upload.data} alt="Selected property photo preview" /><div><strong>Preview ready</strong><span>{upload.name} · {upload.width} × {upload.height}</span><button type="button" onClick={() => setUpload(null)}>Cancel selection</button></div></div>}
-      <div className="design-photo-form-actions">{editingId && <button type="button" onClick={cancelEdit}>Cancel edit</button>}<button className="primary">{editingId ? 'Save photo changes' : 'Save to gallery'}</button></div>
+      {!editingId && <div className="design-photo-source-actions"><label className="design-file-button">Take Photo<input type="file" accept={PROJECT_PHOTO_ACCEPT} capture="environment" onChange={event => { selectPhoto(event.target.files?.[0]); event.target.value = ''; }} /></label><label className="design-file-button">Upload Photo<input type="file" accept={PROJECT_PHOTO_ACCEPT} onChange={event => { selectPhoto(event.target.files?.[0]); event.target.value = ''; }} /></label></div>}
+      {photoLoading && <div className="design-photo-status" role="status">{upload ? 'Saving photo to this device…' : 'Preparing photo preview…'}</div>}
+      {upload && <div className="design-selected-photo"><img src={upload.data} alt="Selected property photo preview" /><div><strong>Preview ready</strong><span>{upload.name} · {upload.width} × {upload.height}</span><button type="button" onClick={() => { releasePreparedProjectPhoto(upload); setUpload(null); }}>Cancel selection</button></div></div>}
+      <div className="design-photo-form-actions">{editingId && <button type="button" onClick={cancelEdit}>Cancel edit</button>}<button className="primary" disabled={photoLoading}>{editingId ? 'Save photo changes' : photoLoading ? 'Saving photo…' : 'Save to gallery'}</button></div>
       {photoError && <div className="design-photo-error" role="alert">{photoError}</div>}
     </form>
     <div className="design-gallery-toolbar"><div>{['All', 'Before', 'Progress', 'Finished'].map(item => <button key={item} className={filter === item ? 'active' : ''} onClick={() => setFilter(item)}>{item}</button>)}</div><span>{photos.length} visible photos</span></div>
@@ -591,9 +803,9 @@ function CanvasWorkspace({ concept, photos, measurements, saveConcept, duplicate
   </div>;
 }
 
-function DesignConcepts({ data, setData, project, canvasOnly = false, openPresentation }) {
+function DesignConcepts({ data, setData, project, canvasOnly = false, openPresentation, initialDesignId = '' }) {
   const projectId = project.projectId;
-  const [activeId, setActiveId] = useState('');
+  const [activeId, setActiveId] = useState(initialDesignId);
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [newStatus, setNewStatus] = useState('Draft');
@@ -604,6 +816,7 @@ function DesignConcepts({ data, setData, project, canvasOnly = false, openPresen
     if (active && active.designId !== activeId) setActiveId(active.designId);
     if (!active && activeId) setActiveId('');
   }, [active?.designId, activeId]);
+  useEffect(() => { if (initialDesignId) setActiveId(initialDesignId); }, [initialDesignId]);
   useEffect(() => {
     if (active) setDetailDraft({ name: active.name, description: active.description || '', status: active.status });
   }, [active?.designId]);
@@ -615,9 +828,17 @@ function DesignConcepts({ data, setData, project, canvasOnly = false, openPresen
       id: designId,
       designId,
       projectId,
+      clientId: project.clientId || '',
       name: name.trim(),
+      designName: name.trim(),
       description: description.trim(),
       status: newStatus,
+      designStatus: newStatus,
+      approvalStatus: newStatus === 'Approved' ? 'Approved' : 'Not approved',
+      versionNumber: 1,
+      sourcePhotoId: '',
+      originalPhoto: '',
+      currentPreview: '',
       createdAt: now(),
       updatedAt: now(),
       notes: { general: '', clientRequests: '', maintenance: '', futureIdeas: '' },
@@ -669,40 +890,12 @@ function DesignConcepts({ data, setData, project, canvasOnly = false, openPresen
     } : item),
   }));
   const duplicate = concept => {
-    const designId = uid('design');
-    const duplicateConcept = {
-      ...clone(concept),
-      id: designId,
-      designId,
-      name: `${concept.name} — Copy`,
-      status: 'Draft',
-      createdAt: now(),
-      updatedAt: now(),
-      revisionHistory: [{ id: uid('revision'), date: now(), note: `Duplicated from ${concept.name}` }, ...(concept.revisionHistory || [])],
-    };
+    let result;
     setData(current => {
-      const sourceLayers = current.designLayers.filter(item => item.conceptId === concept.designId);
-      const layerMap = new Map();
-      const layers = sourceLayers.map(item => {
-        const layerId = uid('design-layer');
-        layerMap.set(item.layerId, layerId);
-        return { ...clone(item), id: layerId, layerId, conceptId: designId, projectId, clientId: project.clientId, createdAt: now(), updatedAt: now() };
-      });
-      const fallbackLayers = layers.length ? layers : createDefaultDesignLayers({ projectId, clientId: project.clientId, conceptId: designId });
-      const sourceSettings = current.designCanvasSettings.find(item => item.conceptId === concept.designId);
-      const settings = sourceSettings
-        ? { ...clone(sourceSettings), id: `design-canvas-${designId}`, canvasSettingId: `design-canvas-${designId}`, conceptId: designId, projectId, clientId: project.clientId, revision: 0, updatedAt: now(), presentationLayerIds: (sourceSettings.presentationLayerIds || []).map(id => layerMap.get(id)).filter(Boolean) }
-        : createCanvasSettings({ projectId, clientId: project.clientId, conceptId: designId });
-      const objects = current.designObjects.filter(item => item.conceptId === concept.designId && !item.archived).map(item => createDesignObject({ ...clone(item), id: undefined, objectId: undefined, conceptId: designId, projectId, clientId: project.clientId, layerId: layerMap.get(item.layerId) || fallbackLayers[0]?.layerId, legacySourceId: '', createdAt: now(), updatedAt: now() }));
-      return {
-        ...current,
-        designConcepts: [duplicateConcept, ...current.designConcepts],
-        designLayers: [...fallbackLayers, ...current.designLayers],
-        designCanvasSettings: [settings, ...current.designCanvasSettings],
-        designObjects: [...objects, ...current.designObjects],
-      };
+      result = duplicateDesignRecord(current, concept.designId);
+      return result.state;
     });
-    setActiveId(designId);
+    setTimeout(() => setActiveId(result?.designId || ''), 0);
   };
   const archive = concept => {
     if (confirm(`Archive ${concept.name}?`)) patch(concept.designId, { archived: true });
@@ -1066,8 +1259,12 @@ function IndependentDesignWorkspace({ data, setData, record, onBack }) {
         designObjects: current.designObjects.map(item => item.conceptId === record.designId ? { ...item, clientId: targetProject.clientId, projectId: targetProject.projectId, updatedAt } : item),
         designLayers: current.designLayers.map(item => item.conceptId === record.designId ? { ...item, clientId: targetProject.clientId, projectId: targetProject.projectId, updatedAt } : item),
         designCanvasSettings: current.designCanvasSettings.map(item => item.conceptId === record.designId ? { ...item, clientId: targetProject.clientId, projectId: targetProject.projectId, updatedAt } : item),
-        designVersions: current.designVersions.map(item => item.conceptId === record.designId ? { ...item, clientId: targetProject.clientId, projectId: targetProject.projectId, snapshot: { ...item.snapshot, objects: (item.snapshot?.objects || []).map(object => ({ ...object, clientId: targetProject.clientId, projectId: targetProject.projectId })), layers: (item.snapshot?.layers || []).map(layer => ({ ...layer, clientId: targetProject.clientId, projectId: targetProject.projectId })), canvasSettings: item.snapshot?.canvasSettings ? { ...item.snapshot.canvasSettings, clientId: targetProject.clientId, projectId: targetProject.projectId } : item.snapshot?.canvasSettings }, updatedAt } : item),
+        designVersions: current.designVersions.map(item => item.conceptId === record.designId ? { ...item, clientId: targetProject.clientId, projectId: targetProject.projectId, snapshot: { ...item.snapshot, objects: (item.snapshot?.objects || []).map(object => ({ ...object, clientId: targetProject.clientId, projectId: targetProject.projectId })), layers: (item.snapshot?.layers || []).map(layer => ({ ...layer, clientId: targetProject.clientId, projectId: targetProject.projectId })), areas: (item.snapshot?.areas || []).map(area => ({ ...area, clientId: targetProject.clientId, projectId: targetProject.projectId })), masks: (item.snapshot?.masks || []).map(mask => ({ ...mask, clientId: targetProject.clientId, projectId: targetProject.projectId })), materialDrafts: (item.snapshot?.materialDrafts || []).map(material => ({ ...material, clientId: targetProject.clientId, projectId: targetProject.projectId })), canvasSettings: item.snapshot?.canvasSettings ? { ...item.snapshot.canvasSettings, clientId: targetProject.clientId, projectId: targetProject.projectId } : item.snapshot?.canvasSettings }, updatedAt } : item),
         designNotes: current.designNotes.map(item => item.conceptId === record.designId ? { ...item, clientId: targetProject.clientId, projectId: targetProject.projectId, updatedAt } : item),
+        designAreas: current.designAreas.map(item => item.conceptId === record.designId ? { ...item, clientId: targetProject.clientId, projectId: targetProject.projectId, updatedAt } : item),
+        designMasks: current.designMasks.map(item => item.conceptId === record.designId ? { ...item, clientId: targetProject.clientId, projectId: targetProject.projectId } : item),
+        designMaterialDrafts: current.designMaterialDrafts.map(item => item.conceptId === record.designId ? { ...item, clientId: targetProject.clientId, projectId: targetProject.projectId, updatedAt } : item),
+        projectMaterials: current.projectMaterials.map(item => item.conceptId === record.designId ? { ...item, clientId: targetProject.clientId, projectId: targetProject.projectId, updatedAt } : item),
         designMeasurements: current.designMeasurements.map(item => item.designId === record.designId || item.projectId === previousOwnerId ? { ...item, clientId: targetProject.clientId, projectId: targetProject.projectId, updatedAt } : item),
         projectPhotos: current.projectPhotos.map(item => item.projectId === previousOwnerId && (item.independentDesignId === record.independentDesignId || previousOwnerId === record.independentDesignId) ? { ...item, clientId: targetProject.clientId, projectId: targetProject.projectId, independentDesignId: record.independentDesignId, updatedAt } : item),
         designInspirations: current.designInspirations.map(item => item.projectId === previousOwnerId ? { ...item, clientId: targetProject.clientId, projectId: targetProject.projectId, independentDesignId: record.independentDesignId, updatedAt } : item),
@@ -1097,6 +1294,7 @@ function IndependentDesignWorkspace({ data, setData, record, onBack }) {
 
 export function DesignDistrict({ data, setData, initialProjectId = '', openProject, openProjectDistrict, openSketch, openPresentation }) {
   const [selectedId, setSelectedId] = useState(initialProjectId);
+  const [selectedDesignId, setSelectedDesignId] = useState('');
   const [selectedIndependentId, setSelectedIndependentId] = useState('');
   const [tab, setTab] = useState('Overview');
   useEffect(() => {
@@ -1108,7 +1306,7 @@ export function DesignDistrict({ data, setData, initialProjectId = '', openProje
   const independentDesign = (data.independentDesigns || []).find(item => item.independentDesignId === selectedIndependentId && !item.archived);
   if (independentDesign) return <IndependentDesignWorkspace data={data} setData={setData} record={independentDesign} onBack={() => setSelectedIndependentId('')} />;
   const project = data.projects.find(item => item.projectId === selectedId && !item.archived);
-  if (!project) return <DesignLanding data={data} setData={setData} openProjectDistrict={openProjectDistrict} selectIndependent={setSelectedIndependentId} selectProject={projectId => { setSelectedId(projectId); setTab('Overview'); }} />;
+  if (!project) return <DesignLanding data={data} setData={setData} openProjectDistrict={openProjectDistrict} selectIndependent={setSelectedIndependentId} selectProject={(projectId, designId = '') => { setSelectedId(projectId); setSelectedDesignId(designId); setTab(designId ? 'Design Canvas' : 'Overview'); }} />;
   return <div className="page design-district-page">
     <header className="design-studio-header glass">
       <button onClick={() => setSelectedId('')}>← Design District</button>
@@ -1118,8 +1316,8 @@ export function DesignDistrict({ data, setData, initialProjectId = '', openProje
     <nav className="design-studio-tabs" aria-label="Design Studio sections">{DESIGN_TABS.map(item => <button key={item} className={tab === item ? 'active' : ''} onClick={() => setTab(item)}>{item}</button>)}</nav>
     {tab === 'Overview' && <PropertyOverview data={data} project={project} openProject={openProject} openSketch={openSketch} setTab={setTab} />}
     {tab === 'Property Photos' && <SitePhotos data={data} setData={setData} projectId={project.projectId} />}
-    {tab === 'Design Concepts' && <DesignConcepts data={data} setData={setData} project={project} />}
-    {tab === 'Design Canvas' && <DesignConcepts data={data} setData={setData} project={project} canvasOnly openPresentation={openPresentation} />}
+    {tab === 'Design Concepts' && <DesignConcepts data={data} setData={setData} project={project} initialDesignId={selectedDesignId} />}
+    {tab === 'Design Canvas' && <DesignConcepts data={data} setData={setData} project={project} canvasOnly openPresentation={openPresentation} initialDesignId={selectedDesignId} />}
     {tab === 'Plant Palette' && <PlantPalette data={data} setData={setData} projectId={project.projectId} />}
     {tab === 'Materials' && <MaterialLibrary data={data} setData={setData} projectId={project.projectId} />}
     {tab === 'Inspiration Board' && <InspirationBoard data={data} setData={setData} projectId={project.projectId} />}

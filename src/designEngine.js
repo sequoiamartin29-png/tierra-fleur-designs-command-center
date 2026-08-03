@@ -1,4 +1,4 @@
-export const DESIGN_STUDIO_SCHEMA_VERSION = 6;
+export const DESIGN_STUDIO_SCHEMA_VERSION = 7;
 export const DESIGN_CANVAS_WIDTH = 1200;
 export const DESIGN_CANVAS_HEIGHT = 760;
 export const DESIGN_HISTORY_LIMIT = 30;
@@ -29,63 +29,107 @@ export const DESIGN_COLORS = {
 };
 
 export const DEFAULT_DESIGN_LAYERS = [
-  ['Background Photo', 'background', false, true],
-  ['Existing Features', 'existing', true, true],
-  ['Site Conditions', 'site', false, false],
-  ['Sun and Shade', 'sun', false, false],
-  ['Measurements', 'measurements', true, true],
-  ['Bed Outlines', 'beds', true, true],
+  ['Original Photo', 'original-photo', true, true],
+  ['Ground Cover', 'ground-cover', true, true],
+  ['Beds', 'beds', true, true],
+  ['Borders', 'borders', true, true],
+  ['Paths and Pavers', 'paths-pavers', true, true],
   ['Plants', 'plants', true, true],
-  ['Mature Spread', 'mature', true, true],
-  ['Materials', 'materials', true, true],
   ['Structures', 'structures', true, true],
-  ['Irrigation', 'irrigation', false, false],
+  ['Furniture and Decor', 'furniture-decor', true, true],
   ['Lighting', 'lighting', true, true],
-  ['Labels', 'labels', true, true],
+  ['Labels and Measurements', 'labels-measurements', true, true],
   ['Notes', 'notes', false, false],
 ];
 
 export const MATERIAL_PATTERNS = {
-  Mulch: 'mulch',
-  Gravel: 'gravel',
-  Stone: 'stone',
-  Grass: 'grass',
-  Water: 'water',
-  Soil: 'soil',
+  'Dark brown mulch': 'dark-mulch',
+  'Black mulch': 'black-mulch',
+  'Red mulch': 'red-mulch',
+  'Pine bark': 'pine-bark',
+  Compost: 'compost',
+  Topsoil: 'topsoil',
+  'Decorative stone': 'decorative-stone',
+  'River rock': 'river-rock',
+  'Pea gravel': 'pea-gravel',
+  'White stone': 'white-stone',
+  'Grey gravel': 'grey-gravel',
+  'Lawn/grass': 'grass',
+  Concrete: 'concrete',
   Pavers: 'pavers',
+  Mulch: 'dark-mulch',
+  Gravel: 'grey-gravel',
+  Stone: 'decorative-stone',
+  Grass: 'grass',
+  Soil: 'topsoil',
   'Raised bed': 'raised-bed',
 };
 
+export const COVER_FILL_OPTIONS = [
+  'Dark brown mulch', 'Black mulch', 'Red mulch', 'Pine bark', 'Compost', 'Topsoil',
+  'Decorative stone', 'River rock', 'Pea gravel', 'White stone', 'Grey gravel',
+  'Lawn/grass', 'Concrete', 'Pavers', 'Custom color', 'Custom texture reference',
+];
+
+export const BED_TYPES = ['Curved garden bed', 'Straight garden bed', 'Foundation bed', 'Island bed', 'Tree ring', 'Orchard row', 'Raised bed', 'Container grouping'];
+export const BORDER_STYLES = ['Black metal edging', 'Brown metal edging', 'Plastic edging', 'Brick', 'Stone', 'Paver', 'Timber', 'Natural trench edge', 'Decorative border', 'Custom border'];
+export const PATH_TYPES = ['Straight path', 'Curved path', 'Stepping stones', 'Paver walkway', 'Gravel path', 'Brick path', 'Flagstone path', 'Concrete pad', 'Small patio', 'Driveway-edge treatment'];
+
+const ELEMENT_BLUEPRINTS = [
+  ['Fruit trees', 'Apple tree', 'Malus domestica', 'fruit-tree', 16, 18, 'Full Sun', 'Moderate', '4–8', true, 'High'],
+  ['Ornamental trees', 'Flowering dogwood', 'Cornus florida', 'tree', 20, 20, 'Part Sun', 'Moderate', '5–9', false, 'High'],
+  ['Evergreen trees', 'Eastern red cedar', 'Juniperus virginiana', 'tree', 12, 35, 'Full Sun', 'Low', '2–9', false, 'Medium'],
+  ['Shrubs', 'Boxwood', 'Buxus', 'shrub', 4, 4, 'Part Sun', 'Moderate', '5–9', false, 'Low'],
+  ['Flowering shrubs', 'Hydrangea', 'Hydrangea macrophylla', 'shrub', 5, 5, 'Part Shade', 'Moderate', '5–9', false, 'Medium'],
+  ['Perennials', 'Coneflower', 'Echinacea purpurea', 'perennial-cluster', 2, 3, 'Full Sun', 'Low', '3–9', false, 'High'],
+  ['Annuals', 'Zinnia', 'Zinnia elegans', 'perennial-cluster', 1, 3, 'Full Sun', 'Moderate', 'Annual', false, 'High'],
+  ['Herbs', 'Rosemary', 'Salvia rosmarinus', 'herb', 3, 4, 'Full Sun', 'Low', '7–10', true, 'High'],
+  ['Vegetables', 'Tomato', 'Solanum lycopersicum', 'vegetable', 2, 5, 'Full Sun', 'Moderate', 'Annual', true, 'Medium'],
+  ['Grasses', 'Switchgrass', 'Panicum virgatum', 'perennial-cluster', 3, 5, 'Full Sun', 'Low', '3–9', false, 'Medium'],
+  ['Groundcovers', 'Creeping thyme', 'Thymus serpyllum', 'groundcover', 1.5, .5, 'Full Sun', 'Low', '4–9', true, 'High'],
+  ['Vines', 'Clematis', 'Clematis', 'vine', 3, 10, 'Part Sun', 'Moderate', '4–9', false, 'High'],
+  ['Container plants', 'Mixed seasonal planter', '', 'container', 2, 3, 'Part Sun', 'Moderate', 'Seasonal', false, 'Medium'],
+  ['Tropical plants', 'Canna lily', 'Canna', 'perennial-cluster', 3, 6, 'Full Sun', 'High', '7–11', false, 'High'],
+  ['Pollinator plants', 'Milkweed', 'Asclepias', 'perennial-cluster', 2, 4, 'Full Sun', 'Low', '3–9', false, 'High'],
+  ['Planters', 'Statement planter', '', 'container'], ['Raised beds', 'Cedar raised bed', '', 'raised-bed'],
+  ['Trellises', 'Garden trellis', '', 'custom'], ['Arbors', 'Garden arbor', '', 'custom'], ['Pergolas', 'Pergola', '', 'custom'],
+  ['Benches', 'Garden bench', '', 'custom'], ['Tables', 'Outdoor table', '', 'custom'], ['Chairs', 'Outdoor chair', '', 'custom'],
+  ['Fountains', 'Garden fountain', '', 'custom'], ['Birdbaths', 'Birdbath', '', 'custom'], ['Lighting', 'Path light', '', 'custom'],
+  ['Decorative pots', 'Decorative pot', '', 'container'], ['Fire features', 'Fire feature', '', 'custom'],
+  ['Outdoor kitchens', 'Outdoor kitchen', '', 'custom'], ['BBQ areas', 'BBQ area', '', 'custom'], ['Pools', 'Pool', '', 'custom'],
+  ['Fencing', 'Fence panel', '', 'custom'], ['Privacy screens', 'Privacy screen', '', 'custom'], ['Garden art', 'Garden sculpture', '', 'custom'],
+];
+
 const TEMPLATE_BLUEPRINTS = [
   ['Front Foundation Bed', 'A welcoming layered foundation composition', [
-    ['polygon', 'Bed outline', 'Bed Outlines', 140, 390, 850, 220],
-    ['label', 'Front foundation bed', 'Labels', 420, 425, 260, 54],
+    ['polygon', 'Bed outline', 'Beds', 140, 390, 850, 220],
+    ['label', 'Front foundation bed', 'Labels and Measurements', 420, 425, 260, 54],
   ]],
   ['Container Garden', 'A flexible grouping for entryways and patios', [
     ['structure', 'Statement container', 'Structures', 310, 280, 120, 120],
     ['structure', 'Companion container', 'Structures', 500, 330, 95, 95],
-    ['label', 'Container grouping', 'Labels', 370, 465, 250, 54],
+    ['label', 'Container grouping', 'Labels and Measurements', 370, 465, 250, 54],
   ]],
   ['Patio Orchard', 'A small fruit-tree arrangement for outdoor living', [
     ['plant', 'Fruit tree placeholder', 'Plants', 280, 250, 74, 74],
     ['plant', 'Fruit tree placeholder', 'Plants', 510, 230, 74, 74],
     ['plant', 'Fruit tree placeholder', 'Plants', 740, 270, 74, 74],
-    ['label', 'Patio orchard', 'Labels', 470, 410, 230, 54],
+    ['label', 'Patio orchard', 'Labels and Measurements', 470, 410, 230, 54],
   ]],
   ['Pollinator Border', 'A flowing perennial border with repeating groups', [
-    ['polygon', 'Pollinator border', 'Bed Outlines', 115, 410, 960, 190],
+    ['polygon', 'Pollinator border', 'Beds', 115, 410, 960, 190],
     ['plant', 'Perennial cluster', 'Plants', 275, 455, 70, 70],
     ['plant', 'Perennial cluster', 'Plants', 515, 470, 70, 70],
     ['plant', 'Perennial cluster', 'Plants', 755, 450, 70, 70],
   ]],
   ['Herb Garden', 'An orderly kitchen-garden planting area', [
-    ['shape', 'Herb garden bed', 'Bed Outlines', 330, 230, 480, 310],
-    ['label', 'Culinary herbs', 'Labels', 450, 360, 240, 54],
+    ['shape', 'Herb garden bed', 'Beds', 330, 230, 480, 310],
+    ['label', 'Culinary herbs', 'Labels and Measurements', 450, 360, 240, 54],
   ]],
   ['Raised Vegetable Bed', 'A practical raised-bed starting point', [
-    ['material', 'Raised bed', 'Materials', 300, 230, 260, 390],
-    ['material', 'Raised bed', 'Materials', 650, 230, 260, 390],
-    ['measurement', 'Path width', 'Measurements', 565, 430, 80, 18],
+    ['material', 'Raised bed', 'Beds', 300, 230, 260, 390],
+    ['material', 'Raised bed', 'Beds', 650, 230, 260, 390],
+    ['measurement', 'Path width', 'Labels and Measurements', 565, 430, 80, 18],
   ]],
   ['Privacy Screen', 'A repeated planting rhythm for gentle screening', [
     ['plant', 'Screening plant', 'Plants', 230, 300, 84, 84],
@@ -94,19 +138,19 @@ const TEMPLATE_BLUEPRINTS = [
     ['plant', 'Screening plant', 'Plants', 830, 300, 84, 84],
   ]],
   ['Sensory Garden', 'A curved bed for fragrance, texture, and sound', [
-    ['polygon', 'Sensory bed', 'Bed Outlines', 185, 260, 820, 310],
-    ['label', 'Fragrance • texture • movement', 'Labels', 410, 385, 390, 54],
+    ['polygon', 'Sensory bed', 'Beds', 185, 260, 820, 310],
+    ['label', 'Fragrance • texture • movement', 'Labels and Measurements', 410, 385, 390, 54],
   ]],
   ['Entryway Planters', 'A balanced pair of entry containers', [
     ['structure', 'Entry planter', 'Structures', 330, 300, 125, 125],
     ['structure', 'Entry planter', 'Structures', 745, 300, 125, 125],
-    ['label', 'Entry', 'Labels', 535, 340, 130, 54],
+    ['label', 'Entry', 'Labels and Measurements', 535, 340, 130, 54],
   ]],
   ['Micro-Orchard', 'A compact edible grove with approximate spacing', [
     ['plant', 'Fruit tree placeholder', 'Plants', 300, 225, 84, 84],
     ['plant', 'Fruit tree placeholder', 'Plants', 580, 225, 84, 84],
     ['plant', 'Fruit tree placeholder', 'Plants', 440, 470, 84, 84],
-    ['measurement', 'Approximate spacing', 'Measurements', 390, 285, 270, 18],
+    ['measurement', 'Approximate spacing', 'Labels and Measurements', 390, 285, 270, 18],
   ]],
 ];
 
@@ -122,13 +166,15 @@ export function createDefaultDesignLayers({ projectId = '', clientId = '', conce
   return DEFAULT_DESIGN_LAYERS.map(([name, key, clientVisible, exportEnabled], order) => ({
     id: `design-layer-${slug(conceptId)}-${key}`,
     layerId: `design-layer-${slug(conceptId)}-${key}`,
+    designLayerId: `design-layer-${slug(conceptId)}-${key}`,
     projectId,
     clientId,
     conceptId,
     name,
     order,
     visible: true,
-    locked: name === 'Background Photo',
+    locked: name === 'Original Photo',
+    protectedLayer: name === 'Original Photo',
     clientVisible,
     presentationVisible: clientVisible,
     exportEnabled,
@@ -199,6 +245,37 @@ function seedTemplates() {
   }));
 }
 
+function seedDesignElements() {
+  return ELEMENT_BLUEPRINTS.map(([category, name, botanicalName = '', symbol = 'custom', matureWidth = 0, matureHeight = 0, sunRequirement = '', waterRequirement = '', usdaZone = '', edible = false, pollinatorValue = ''], index) => {
+    const designElementId = `design-element-local-${String(index + 1).padStart(2, '0')}`;
+    const isPlant = index < 15;
+    return {
+      id: designElementId,
+      designElementId,
+      category,
+      name,
+      commonName: isPlant ? name : '',
+      botanicalName,
+      imageAsset: `local-symbol:${symbol}`,
+      elementKind: isPlant ? 'plant' : 'landscape',
+      symbol,
+      matureWidth,
+      matureHeight,
+      suggestedSpacing: matureWidth,
+      sunRequirement,
+      waterRequirement,
+      usdaZone,
+      edible,
+      pollinatorValue,
+      unitCost: '',
+      supplier: '',
+      installationNotes: '',
+      builtIn: true,
+      archived: false,
+    };
+  });
+}
+
 export function createDesignStudioStarter() {
   return {
     designStudioSchemaVersion: DESIGN_STUDIO_SCHEMA_VERSION,
@@ -210,6 +287,82 @@ export function createDesignStudioStarter() {
     designTemplates: seedTemplates(),
     designLegendSettings: [],
     designExportSettings: [],
+    designAreas: [],
+    designMasks: [],
+    designMaterialDrafts: [],
+    projectMaterials: [],
+    designElementLibrary: seedDesignElements(),
+  };
+}
+
+export function createDesignArea(input = {}) {
+  const designAreaId = input.designAreaId || input.id || uid('design-area');
+  return {
+    id: designAreaId,
+    designAreaId,
+    projectId: input.projectId || '',
+    clientId: input.clientId || '',
+    conceptId: input.conceptId || '',
+    objectId: input.objectId || '',
+    selectionType: input.selectionType || 'polygon',
+    purpose: input.purpose || 'Ground cover',
+    material: input.material || 'Dark brown mulch',
+    points: records(input.points).map(point => ({ x: finite(point.x), y: finite(point.y) })),
+    area: input.area ?? '',
+    unit: input.unit || 'sq ft',
+    depth: input.depth ?? '',
+    wastePercentage: input.wastePercentage ?? 10,
+    createdAt: input.createdAt || now(),
+    updatedAt: input.updatedAt || now(),
+    archived: Boolean(input.archived),
+  };
+}
+
+export function createDesignMask(input = {}) {
+  const designMaskId = input.designMaskId || input.id || uid('design-mask');
+  return {
+    id: designMaskId,
+    designMaskId,
+    projectId: input.projectId || '',
+    clientId: input.clientId || '',
+    conceptId: input.conceptId || '',
+    targetObjectId: input.targetObjectId || '',
+    mode: input.mode === 'restore' ? 'restore' : 'hide',
+    brushSize: Math.max(2, finite(input.brushSize, 42)),
+    brushSoftness: Math.max(0, Math.min(1, finite(input.brushSoftness, .35))),
+    opacity: Math.max(.05, Math.min(1, finite(input.opacity, 1))),
+    points: records(input.points).map(point => ({ x: finite(point.x), y: finite(point.y) })),
+    createdAt: input.createdAt || now(),
+    archived: Boolean(input.archived),
+  };
+}
+
+export function createDesignMaterialDraft(input = {}) {
+  const designMaterialId = input.designMaterialId || input.id || uid('design-material');
+  return {
+    id: designMaterialId,
+    designMaterialId,
+    projectMaterialId: input.projectMaterialId || '',
+    projectId: input.projectId || '',
+    clientId: input.clientId || '',
+    conceptId: input.conceptId || '',
+    designAreaId: input.designAreaId || '',
+    designObjectId: input.designObjectId || '',
+    name: input.name || 'Design material',
+    material: input.material || input.name || 'Material',
+    area: input.area ?? '',
+    depth: input.depth ?? '',
+    quantity: input.quantity ?? 1,
+    unit: input.unit || 'sq ft',
+    unitCost: input.unitCost ?? '',
+    supplier: input.supplier || '',
+    wastePercentage: input.wastePercentage ?? 10,
+    deliveryCost: input.deliveryCost ?? '',
+    status: input.status || 'Draft',
+    notes: input.notes || '',
+    createdAt: input.createdAt || now(),
+    updatedAt: input.updatedAt || now(),
+    archived: Boolean(input.archived),
   };
 }
 
@@ -222,7 +375,13 @@ export function createDesignObject(input = {}) {
     clientId: input.clientId || '',
     conceptId: input.conceptId || '',
     layerId: input.layerId || '',
+    designElementId: input.designElementId || objectId,
+    libraryElementId: input.libraryElementId || '',
+    designAreaId: input.designAreaId || '',
+    designMaterialId: input.designMaterialId || '',
     objectType: input.objectType || 'annotation',
+    selectionType: input.selectionType || '',
+    pathKind: input.pathKind || '',
     x: finite(input.x, 120),
     y: finite(input.y, 120),
     width: Math.max(8, finite(input.width, 120)),
@@ -231,6 +390,8 @@ export function createDesignObject(input = {}) {
     zIndex: finite(input.zIndex, 1),
     opacity: Math.max(0.05, Math.min(1, finite(input.opacity, 1))),
     locked: bool(input.locked),
+    grouped: bool(input.grouped),
+    groupId: input.groupId || '',
     visible: input.visible !== false,
     clientVisible: bool(input.clientVisible),
     exportEnabled: input.exportEnabled !== false,
@@ -256,6 +417,23 @@ export function createDesignObject(input = {}) {
       category: input.style?.category || '',
       clientPrice: input.style?.clientPrice ?? '',
       finish: input.style?.finish || '',
+      material: input.style?.material || '',
+      textureScale: Math.max(.1, finite(input.style?.textureScale, 1)),
+      textureRotation: finite(input.style?.textureRotation, 0),
+      edgeSoftness: Math.max(0, Math.min(1, finite(input.style?.edgeSoftness, 0))),
+      borderStyle: input.style?.borderStyle || '',
+      shadow: Math.max(0, finite(input.style?.shadow, 0)),
+      flipX: bool(input.style?.flipX),
+      flipY: bool(input.style?.flipY),
+      perspectiveSkew: finite(input.style?.perspectiveSkew, 0),
+      blur: Math.max(0, finite(input.style?.blur, 0)),
+      brightness: Math.max(.1, finite(input.style?.brightness, 1)),
+      contrast: Math.max(.1, finite(input.style?.contrast, 1)),
+      feather: Math.max(0, Math.min(1, finite(input.style?.feather, 0))),
+      customColor: input.style?.customColor || '',
+      customTextureReference: input.style?.customTextureReference || '',
+      pathWidth: Math.max(1, finite(input.style?.pathWidth, 36)),
+      borderThickness: Math.max(1, finite(input.style?.borderThickness, 8)),
       ...input.style,
     },
     points: records(input.points).map(point => ({ x: finite(point.x), y: finite(point.y) })),
@@ -281,10 +459,12 @@ function normalizeLayer(item, fallback = {}) {
     ...item,
     id: layerId,
     layerId,
+    designLayerId: item.designLayerId || layerId,
     name: item.name || fallback.name || 'Layer',
     order: finite(item.order, fallback.order || 0),
     visible: item.visible !== false,
     locked: bool(item.locked),
+    protectedLayer: bool(item.protectedLayer) || item.name === 'Original Photo' || item.name === 'Background Photo',
     clientVisible: bool(item.clientVisible),
     presentationVisible: bool(item.presentationVisible),
     exportEnabled: item.exportEnabled !== false,
@@ -328,9 +508,10 @@ function legacyLayerName(placement) {
   if (/light/i.test(name)) return 'Lighting';
   if (/irrig/i.test(name)) return 'Irrigation';
   if (/note/i.test(name)) return 'Notes';
-  if (/measure/i.test(name)) return 'Measurements';
-  if (/hardscape/i.test(name) || placement.type === 'material') return 'Materials';
-  return 'Existing Features';
+  if (/measure|label/i.test(name)) return 'Labels and Measurements';
+  if (/hardscape|path|paver/i.test(name)) return 'Paths and Pavers';
+  if (placement.type === 'material') return 'Ground Cover';
+  return 'Structures';
 }
 
 function legacyObject(concept, placement, index, layers, clientId) {
@@ -423,6 +604,12 @@ export function migrateDesignStudioData(saved = {}, related = {}) {
     ...templates.map(item => ({ ...item, templateId: item.templateId || item.id, archived: Boolean(item.archived) })),
     ...seedTemplates().filter(item => !templateById.has(item.templateId)),
   ];
+  const savedElements = records(saved.designElementLibrary);
+  const elementIds = new Set(savedElements.map(item => item.designElementId || item.id));
+  const designElementLibrary = [
+    ...savedElements.map(item => ({ ...item, designElementId: item.designElementId || item.id, archived: Boolean(item.archived) })),
+    ...seedDesignElements().filter(item => !elementIds.has(item.designElementId)),
+  ];
 
   return {
     designStudioSchemaVersion: DESIGN_STUDIO_SCHEMA_VERSION,
@@ -435,11 +622,13 @@ export function migrateDesignStudioData(saved = {}, related = {}) {
         ...item,
         id: versionId,
         versionId,
+        designVersionId: item.designVersionId || versionId,
         name: item.name || 'Saved design version',
         status: DESIGN_STATUS_OPTIONS.includes(item.status) ? item.status : 'Draft',
         revisionNotes: item.revisionNotes || '',
         recommended: bool(item.recommended || item.status === 'Recommended'),
         clientSelected: bool(item.clientSelected || item.status === 'Client Selected'),
+        favorite: bool(item.favorite),
         approvedAt: item.approvedAt || '',
         snapshot: {
           objects: records(item.snapshot?.objects).map(createDesignObject),
@@ -447,6 +636,9 @@ export function migrateDesignStudioData(saved = {}, related = {}) {
           canvasSettings: item.snapshot?.canvasSettings || null,
           legendSettings: item.snapshot?.legendSettings || null,
           displaySettings: item.snapshot?.displaySettings || null,
+          areas: records(item.snapshot?.areas).map(createDesignArea),
+          masks: records(item.snapshot?.masks).map(createDesignMask),
+          materialDrafts: records(item.snapshot?.materialDrafts).map(createDesignMaterialDraft),
           capturedAt: item.snapshot?.capturedAt || item.createdAt || now(),
         },
         createdAt: item.createdAt || now(),
@@ -494,16 +686,27 @@ export function migrateDesignStudioData(saved = {}, related = {}) {
       ...item,
       archived: Boolean(item.archived),
     })),
+    designAreas: records(saved.designAreas).map(createDesignArea),
+    designMasks: records(saved.designMasks).map(createDesignMask),
+    designMaterialDrafts: records(saved.designMaterialDrafts).map(createDesignMaterialDraft),
+    projectMaterials: records(saved.projectMaterials).map(item => {
+      const projectMaterialId = item.projectMaterialId || item.id || uid('project-material');
+      return { ...item, id: projectMaterialId, projectMaterialId, status: item.status || 'Draft', archived: Boolean(item.archived) };
+    }),
+    designElementLibrary,
   };
 }
 
-export function createVersionSnapshot({ objects, layers, canvasSettings, legendSettings, displaySettings }) {
+export function createVersionSnapshot({ objects, layers, canvasSettings, legendSettings, displaySettings, areas, masks, materialDrafts }) {
   return {
     objects: copy(records(objects)),
     layers: copy(records(layers)),
     canvasSettings: copy(canvasSettings || null),
     legendSettings: copy(legendSettings || null),
     displaySettings: copy(displaySettings || null),
+    areas: copy(records(areas)),
+    masks: copy(records(masks)),
+    materialDrafts: copy(records(materialDrafts)),
     capturedAt: now(),
   };
 }
@@ -513,6 +716,7 @@ export function createDesignVersion(input) {
   return {
     id: versionId,
     versionId,
+    designVersionId: versionId,
     projectId: input.projectId,
     clientId: input.clientId || '',
     conceptId: input.conceptId,
@@ -522,6 +726,7 @@ export function createDesignVersion(input) {
     revisionNotes: input.revisionNotes || '',
     recommended: bool(input.recommended),
     clientSelected: bool(input.clientSelected),
+    favorite: bool(input.favorite),
     approvedAt: input.approvedAt || '',
     snapshot: createVersionSnapshot(input),
     createdAt: now(),
@@ -558,8 +763,8 @@ export function compareDesignVersions(left, right) {
     removed,
     leftPlants: plantQuantity(leftObjects),
     rightPlants: plantQuantity(rightObjects),
-    leftMaterials: leftObjects.filter(item => item.objectType === 'material').length,
-    rightMaterials: rightObjects.filter(item => item.objectType === 'material').length,
+    leftMaterials: leftObjects.filter(item => ['material', 'cover', 'bed', 'border', 'path'].includes(item.objectType)).length,
+    rightMaterials: rightObjects.filter(item => ['material', 'cover', 'bed', 'border', 'path'].includes(item.objectType)).length,
     leftClientPrice: clientPrice(leftObjects),
     rightClientPrice: clientPrice(rightObjects),
   };
@@ -634,7 +839,7 @@ export function designCostSummary(data, projectId, objects) {
   const linkedPlantIds = new Set(activeObjects.map(item => item.relatedProjectPlantId).filter(Boolean));
   const plants = records(data.projectPlants).filter(item => item.projectId === projectId && linkedPlantIds.has(item.projectPlantId) && !item.archived);
   const plantTotal = plants.reduce((sum, item) => sum + finite(item.clientPrice) * finite(item.quantity, 1), 0);
-  const materialTotal = activeObjects.filter(item => item.objectType === 'material').reduce((sum, item) => sum + finite(item.style?.clientPrice) * finite(item.style?.quantity, 1), 0);
+  const materialTotal = activeObjects.filter(item => ['material', 'cover', 'bed', 'border', 'path'].includes(item.objectType)).reduce((sum, item) => sum + finite(item.style?.clientPrice) * finite(item.style?.quantity, 1), 0);
   const estimates = records(data.estimates).filter(item => item.projectId === projectId && !item.archived && item.status !== 'Cancelled');
   const estimateLines = estimates.flatMap(item => records(item.lines));
   const categoryTotal = matcher => estimateLines.filter(line => matcher(String(line.category || line.description || '').toLowerCase()))
