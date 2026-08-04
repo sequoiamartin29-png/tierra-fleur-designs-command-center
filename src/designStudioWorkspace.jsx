@@ -63,6 +63,25 @@ const TOOLS = [
   ['pan', 'Pan', 'Space'],
 ];
 
+const TOOL_HELP = {
+  select: 'Select an item, then move it or use Object Details to resize, rotate, duplicate, or delete it.',
+  'cover-freehand': 'Draw directly over grass, soil, or another area to place a material overlay.',
+  'cover-polygon': 'Drag out a shaped ground-cover area with editable corners.',
+  'cover-rectangle': 'Drag a rectangular ground-cover area.',
+  'cover-ellipse': 'Drag a rounded ground-cover area.',
+  bed: 'Drag across the photo to create a garden bed.', border: 'Drag along an edge to add a landscape border.',
+  path: 'Drag from the start to the end of a pathway.',
+  'mask-hide': 'Hide part of a selected cover, material, or bed without changing the original photo.',
+  'mask-restore': 'Paint back part of a selected cover, material, or bed mask.',
+  elements: 'Open the local plant, tree, and landscape element library.', plant: 'Tap the canvas to place a plant placeholder.',
+  pan: 'Drag to move your view of the canvas without moving design objects.', pen: 'Draw a simple freehand note or outline.',
+  highlighter: 'Draw a translucent highlight over the canvas.', line: 'Drag to add a straight line.', arrow: 'Drag to add an arrow.',
+  rectangle: 'Drag to add a rectangle.', circle: 'Drag to add a circle.', polygon: 'Drag to add a simple bed outline.',
+  eraser: 'Tap an unlocked object to remove it. Undo remains available.', text: 'Tap to place a text label.',
+  measurement: 'Drag an approximate measurement line.', material: 'Tap to place a material marker.',
+  overlay: 'Add a site-condition overlay.', feature: 'Tap to place a property feature marker.',
+};
+
 const SYMBOLS = [
   ['canopy', 'Canopy circle'],
   ['shrub', 'Shrub circle'],
@@ -228,6 +247,7 @@ export function DesignScene({
   onPointerDown,
   onPointerMove,
   onPointerUp,
+  gestureMode = 'browse',
 }) {
   const orderedLayers = records(layers).filter(active).sort((a, b) => number(a.order) - number(b.order));
   const allowedLayers = new Set(orderedLayers.filter(layer => layer.visible !== false && (!clientSafe || (layer.clientVisible && layer.presentationVisible !== false))).map(layer => layer.layerId));
@@ -253,7 +273,7 @@ export function DesignScene({
 
   return <svg
     ref={sceneRef}
-    className={`design-scene${interactive ? ' interactive' : ''}`}
+    className={`design-scene${interactive ? ' interactive' : ''} gesture-${gestureMode}`}
     viewBox={`${viewX} ${viewY} ${viewWidth} ${viewHeight}`}
     preserveAspectRatio="xMidYMid meet"
     role={interactive ? 'application' : 'img'}
@@ -341,7 +361,9 @@ function WorkspaceToolbar({ tool, setTool, undo, redo, canUndo, canRedo, zoom, s
         type="button"
         className={tool === id ? 'active' : ''}
         aria-pressed={tool === id}
-        title={`${label} (${shortcut})`}
+        aria-label={`${label}. ${TOOL_HELP[id] || `Choose the ${label} tool.`} Shortcut: ${shortcut}`}
+        title={TOOL_HELP[id] || `${label} (${shortcut})`}
+        data-guide-target={id === 'bed' ? 'tool-bed' : id === 'cover-freehand' ? 'tool-cover-freehand' : id === 'border' ? 'tool-border' : id === 'plant' ? 'tool-plant' : undefined}
         onClick={() => setTool(id)}
       ><span aria-hidden="true">{{
         select: '↖', pen: '✎', highlighter: '▰', line: '╱', arrow: '➜', rectangle: '□', circle: '○',
@@ -351,16 +373,16 @@ function WorkspaceToolbar({ tool, setTool, undo, redo, canUndo, canRedo, zoom, s
       }[id]}</span><small>{label}</small></button>)}
     </div>
     <div className="design-history-controls">
-      <button type="button" onClick={undo} disabled={!canUndo} title="Undo (Ctrl or Command Z)">↶ <span>Undo</span></button>
-      <button type="button" onClick={redo} disabled={!canRedo} title="Redo (Ctrl or Command Y)">↷ <span>Redo</span></button>
-      <button type="button" onClick={() => setZoom(Math.max(.4, zoom - .1))} aria-label="Zoom out">−</button>
+      <button type="button" onClick={undo} disabled={!canUndo} title={canUndo ? 'Undo the latest canvas change' : 'Undo is unavailable until you make a change'} aria-label={canUndo ? 'Undo the latest canvas change' : 'Undo unavailable. Make a canvas change first.'}>↶ <span>Undo</span></button>
+      <button type="button" onClick={redo} disabled={!canRedo} title={canRedo ? 'Redo the latest undone change' : 'Redo is unavailable until you undo a change'} aria-label={canRedo ? 'Redo the latest undone change' : 'Redo unavailable. Undo a canvas change first.'}>↷ <span>Redo</span></button>
+      <button type="button" onClick={() => setZoom(Math.max(.4, zoom - .1))} aria-label="Zoom out" title="Zoom out">−</button>
       <output aria-label="Canvas zoom">{Math.round(zoom * 100)}%</output>
-      <button type="button" onClick={() => setZoom(Math.min(2.4, zoom + .1))} aria-label="Zoom in">+</button>
+      <button type="button" onClick={() => setZoom(Math.min(2.4, zoom + .1))} aria-label="Zoom in" title="Zoom in">+</button>
     </div>
   </div>;
 }
 
-function LayerManager({ layers, objects, updateLayers, selectLayer, selectedLayerId }) {
+function LayerManager({ layers, objects, updateLayers, selectLayer, selectedLayerId, onClose }) {
   const [renaming, setRenaming] = useState('');
   const patch = (layerId, changes, reason = 'Layer changed') => updateLayers(layers.map(item => item.layerId === layerId ? { ...item, ...changes, updatedAt: now() } : item), reason);
   const move = (layer, direction) => {
@@ -384,7 +406,8 @@ function LayerManager({ layers, objects, updateLayers, selectLayer, selectedLaye
     patch(layer.layerId, { archived: true, visible: false }, 'Layer archived');
   };
   return <aside className="studio-layer-manager glass" aria-label="Design layers">
-    <div className="studio-panel-heading"><div><span>Layer manager</span><h3>Garden layers</h3></div><small>{layers.filter(active).length} active</small></div>
+    <div className="studio-panel-heading"><div><span>Layer manager</span><h3>Garden layers</h3></div><small>{layers.filter(active).length} active</small><button type="button" className="mobile-panel-close" onClick={onClose} aria-label="Close Layer Manager">×</button></div>
+    {!selectedLayerId && <p className="studio-panel-empty">No layer selected. Tap a layer below to make it active for the next object.</p>}
     <button type="button" className="layer-add-button" onClick={() => {
       const layerId = uid('design-layer');
       updateLayers([...layers, { id: layerId, layerId, designLayerId: layerId, projectId: layers[0]?.projectId || '', clientId: layers[0]?.clientId || '', conceptId: layers[0]?.conceptId || '', name: 'Custom layer', order: layers.length, visible: true, locked: false, protectedLayer: false, clientVisible: false, presentationVisible: false, exportEnabled: true, custom: true, createdAt: now(), updatedAt: now(), archived: false }], 'Custom layer created');
@@ -417,11 +440,11 @@ function LayerManager({ layers, objects, updateLayers, selectLayer, selectedLaye
   </aside>;
 }
 
-function ObjectInspector({ object, layers, objects, settings, masks, selectionCount = 0, patchObject, duplicateObject, deleteObject, moveZ, calibrate, groupSelected, ungroupSelected }) {
-  if (!object) return <aside className="studio-object-inspector glass"><div className="studio-panel-heading"><div><span>Selection</span><h3>Object details</h3></div></div><div className="studio-empty-inspector"><span aria-hidden="true">✦</span><p>Tap an object to edit its label, style, layer, size, privacy, and linked records.</p></div></aside>;
+function ObjectInspector({ object, layers, objects, settings, masks, selectionCount = 0, patchObject, duplicateObject, deleteObject, moveZ, calibrate, groupSelected, ungroupSelected, onClose }) {
+  if (!object) return <aside className="studio-object-inspector glass"><div className="studio-panel-heading"><div><span>Selection</span><h3>Object details</h3></div><button type="button" className="mobile-panel-close" onClick={onClose} aria-label="Close Object Details">×</button></div><div className="studio-empty-inspector"><span aria-hidden="true">✦</span><p>No object selected. Choose Select, then tap an object to edit its label, style, layer, size, privacy, and links.</p></div></aside>;
   const notice = spacingNotice(object, objects, settings);
   return <aside className="studio-object-inspector glass">
-    <div className="studio-panel-heading"><div><span>{object.objectType}</span><h3>{object.label || 'Selected object'}</h3></div><span className={object.locked ? 'status-chip rose' : 'status-chip olive'}>{object.locked ? 'Locked' : 'Editable'}</span></div>
+    <div className="studio-panel-heading"><div><span>{object.objectType}</span><h3>{object.label || 'Selected object'}</h3></div><span className={object.locked ? 'status-chip rose' : 'status-chip olive'}>{object.locked ? 'Locked' : 'Editable'}</span><button type="button" className="mobile-panel-close" onClick={onClose} aria-label="Close Object Details">×</button></div>
     <div className="object-inspector-scroll">
       <label>Label<input value={object.label} onChange={event => patchObject({ label: event.target.value }, 'Label changed')} /></label>
       <label>Layer<select value={object.layerId} onChange={event => patchObject({ layerId: event.target.value }, 'Layer changed')}>{layers.filter(active).map(layer => <option key={layer.layerId} value={layer.layerId}>{layer.name}</option>)}</select></label>
@@ -487,11 +510,11 @@ function ObjectInspector({ object, layers, objects, settings, masks, selectionCo
   </aside>;
 }
 
-function BackgroundControls({ settings, photos, updateSettings }) {
+function BackgroundControls({ settings, photos, updateSettings, onGuideAction }) {
   return <details className="studio-background-controls glass">
-    <summary><span>Property image</span><strong>{photos.find(item => (item.photoId || item.id) === settings.backgroundPhotoId)?.caption || photos.find(item => item.id === settings.backgroundPhotoId)?.fileName || 'Choose a background'}</strong></summary>
+    <summary data-guide-target="background-photo"><span>Property image</span><strong>{photos.find(item => (item.photoId || item.id) === settings.backgroundPhotoId)?.caption || photos.find(item => item.id === settings.backgroundPhotoId)?.fileName || 'No background selected — choose one'}</strong></summary>
     <div>
-      <label>Active design background<select value={settings.backgroundPhotoId} onChange={event => updateSettings({ backgroundPhotoId: event.target.value }, 'Background changed')}><option value="">Cream drafting paper</option>{photos.map(photo => <option key={photo.photoId || photo.id} value={photo.photoId || photo.id}>{photo.caption || photo.fileName}</option>)}</select></label>
+      <label>Active design background<select value={settings.backgroundPhotoId} onChange={event => { updateSettings({ backgroundPhotoId: event.target.value }, 'Background changed'); if (event.target.value) onGuideAction?.('background-chosen'); }}><option value="">Cream drafting paper</option>{photos.map(photo => <option key={photo.photoId || photo.id} value={photo.photoId || photo.id}>{photo.caption || photo.fileName}</option>)}</select></label>
       <label>Fit<select value={settings.backgroundFit} onChange={event => updateSettings({ backgroundFit: event.target.value }, 'Background fit changed')}><option value="cover">Fill canvas</option><option value="contain">Fit entire image</option></select></label>
       <label>Image opacity<input type="range" min="0" max="1" step=".05" value={settings.backgroundOpacity} onChange={event => updateSettings({ backgroundOpacity: number(event.target.value) }, 'Background opacity changed')} /></label>
       <label>Image zoom<input type="range" min=".5" max="2.5" step=".05" value={settings.backgroundZoom} onChange={event => updateSettings({ backgroundZoom: number(event.target.value) }, 'Background zoom changed')} /></label>
@@ -1131,7 +1154,7 @@ function TemplatePanel({ templates, applyTemplate }) {
   </section>;
 }
 
-export function InteractiveDesignStudio({ data, setData, project, concept, duplicateConcept, openPresentation, independent = false }) {
+export function InteractiveDesignStudio({ data, setData, project, concept, duplicateConcept, openPresentation, independent = false, storageStatus = 'saved', onOpenGuide, onGuideAction, onActivity }) {
   const conceptId = concept.designId;
   const clientId = project.clientId || '';
   const initialDraft = useCallback(() => ({
@@ -1158,13 +1181,14 @@ export function InteractiveDesignStudio({ data, setData, project, concept, dupli
   const [showConsultationCosts, setShowConsultationCosts] = useState(false);
   const [libraryOpen, setLibraryOpen] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
-  const [showLayers, setShowLayers] = useState(true);
-  const [showInspector, setShowInspector] = useState(true);
+  const [showLayers, setShowLayers] = useState(() => typeof window === 'undefined' || !window.matchMedia('(max-width: 1100px)').matches);
+  const [showInspector, setShowInspector] = useState(() => typeof window === 'undefined' || !window.matchMedia('(max-width: 1100px)').matches);
   const [quick, setQuick] = useState({ label: 'Garden label', measurementLabel: 'Bed length', plantSource: '', plantLabel: '', symbol: 'canopy', materialId: '', materialType: 'Mulch', overlayGroup: 'Sun and Shade', overlayLabel: 'Full Sun', featureLabel: 'House', coverFill: 'Dark brown mulch', coverOpacity: .72, bedType: BED_TYPES[0], borderStyle: BORDER_STYLES[0], borderThickness: 8, pathType: PATH_TYPES[1], pathWidth: 42, brushSize: 42, brushSoftness: .35, brushOpacity: 1 });
   const sceneRef = useRef(null);
   const interactionRef = useRef(null);
   const baseRevisionRef = useRef(number(draft.settings?.revision));
   const latestPersistedRef = useRef(draft.settings?.updatedAt || '');
+  const pendingSaveRef = useRef({ waiting: false, sawSaving: false });
   const copyRef = useRef(null);
   const photos = data.projectPhotos.filter(item => item.projectId === project.projectId && active(item));
   const versions = data.designVersions.filter(item => item.conceptId === conceptId && active(item)).sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
@@ -1192,6 +1216,30 @@ export function InteractiveDesignStudio({ data, setData, project, concept, dupli
     setSaveState('Saved');
   }, [conceptId]);
 
+  useEffect(() => {
+    if (!pendingSaveRef.current.waiting) return;
+    if (storageStatus === 'saving') {
+      pendingSaveRef.current.sawSaving = true;
+      setSaveState('Saving…');
+    }
+    if (dirty) return;
+    if (storageStatus === 'saved' && pendingSaveRef.current.sawSaving) {
+      pendingSaveRef.current = { waiting: false, sawSaving: false };
+      setSaveState('Saved');
+      onActivity?.({ type: 'saved', draft: clone(draftRef.current) });
+      onGuideAction?.('design-saved');
+    }
+    if (storageStatus === 'failed') {
+      pendingSaveRef.current = { waiting: false, sawSaving: false };
+      setSaveState('Save failed');
+      onActivity?.({ type: 'save-failed' });
+    }
+  }, [storageStatus, dirty, onActivity, onGuideAction]);
+
+  useEffect(() => {
+    if (!dirty && !pendingSaveRef.current.waiting && storageStatus === 'failed') setSaveState('Save failed');
+  }, [storageStatus, dirty]);
+
   const persist = useCallback((manual = false) => {
     const snapshot = clone(draftRef.current);
     if (!snapshot.settings) return;
@@ -1205,6 +1253,7 @@ export function InteractiveDesignStudio({ data, setData, project, concept, dupli
     const settings = { ...snapshot.settings, updatedAt: savedAt, revision: nextRevision };
     baseRevisionRef.current = nextRevision;
     latestPersistedRef.current = savedAt;
+    pendingSaveRef.current = { waiting: true, sawSaving: false };
     draftRef.current = { ...snapshot, settings };
     setDraft(currentDraft => ({ ...currentDraft, settings }));
     setData(current => {
@@ -1221,13 +1270,12 @@ export function InteractiveDesignStudio({ data, setData, project, concept, dupli
       };
     });
     setDirty(false);
-    setSaveState(manual ? 'Saved now' : 'Auto-saved');
-    setTimeout(() => setSaveState('Saved'), 1600);
-  }, [conceptId, data.designCanvasSettings, setData]);
+    setSaveState('Saving…');
+    onActivity?.({ type: 'save-requested', manual, draft: snapshot });
+  }, [conceptId, data.designCanvasSettings, setData, onActivity]);
 
   useEffect(() => {
     if (!dirty) return undefined;
-    setSaveState('Saving…');
     const timer = setTimeout(() => persist(false), 700);
     return () => clearTimeout(timer);
   }, [dirty, draft, persist]);
@@ -1248,7 +1296,9 @@ export function InteractiveDesignStudio({ data, setData, project, concept, dupli
     setDraft(next);
     draftRef.current = next;
     setDirty(true);
-  }, []);
+    setSaveState('Unsaved changes');
+    onActivity?.({ type: 'change', reason, draft: clone(next) });
+  }, [onActivity]);
 
   const commit = useCallback((updater, reason) => {
     const before = draftRef.current;
@@ -1266,7 +1316,9 @@ export function InteractiveDesignStudio({ data, setData, project, concept, dupli
     setSelectedId('');
     setSelectedIds([]);
     setDirty(true);
-  }, [history]);
+    setSaveState('Unsaved changes');
+    onActivity?.({ type: 'undo', reason: entry.reason, draft: clone(entry.draft) });
+  }, [history, onActivity]);
 
   const redo = useCallback(() => {
     if (!future.length) return;
@@ -1278,7 +1330,9 @@ export function InteractiveDesignStudio({ data, setData, project, concept, dupli
     setSelectedId('');
     setSelectedIds([]);
     setDirty(true);
-  }, [future]);
+    setSaveState('Unsaved changes');
+    onActivity?.({ type: 'redo', reason: entry.reason, draft: clone(entry.draft) });
+  }, [future, onActivity]);
 
   const updateSettings = (changes, reason) => commit(current => ({ ...current, settings: { ...current.settings, ...changes } }), reason);
   const updateLayers = (layers, reason) => commit(current => ({ ...current, layers }), reason);
@@ -1437,12 +1491,14 @@ export function InteractiveDesignStudio({ data, setData, project, concept, dupli
       style: { stroke: DESIGN_COLORS.deepGreen, fill: isPlant ? DESIGN_COLORS.olive : DESIGN_COLORS.cream, fillOpacity: isPlant ? .42 : .78, symbol: element.symbol, category: element.category, botanicalName: element.botanicalName, scientificName: element.botanicalName, matureSpreadFeet: element.matureWidth || 0, matureHeight: element.matureHeight || 0, suggestedSpacing: element.suggestedSpacing || 0, sunRequirement: element.sunRequirement || '', waterRequirement: element.waterRequirement || '', usdaZone: element.usdaZone || '', edible: Boolean(element.edible), pollinatorValue: element.pollinatorValue || '', unitCost: element.unitCost || '', supplier: element.supplier || '', installationNotes: element.installationNotes || '', quantity: 1, showLabel: true },
     });
     addObject(object, 'Local design element placed');
+    if (isPlant) onGuideAction?.('plant-placed');
     setLibraryOpen(false);
   };
 
   const onCanvasPointerDown = event => {
     if (event.button !== undefined && event.button !== 0) return;
     if (event.target.closest?.('[data-object-id]')) return;
+    if (tool !== 'select' && (event.pointerType === 'pen' || event.pointerType === 'touch')) event.preventDefault();
     const point = canvasPoint(event);
     if (tool === 'select') {
       setSelectedId('');
@@ -1466,6 +1522,7 @@ export function InteractiveDesignStudio({ data, setData, project, concept, dupli
     }
     if (['text', 'plant'].includes(tool)) {
       addObject(newObjectAt(point));
+      if (tool === 'plant') onGuideAction?.('plant-placed');
       return;
     }
     const isCover = tool.startsWith('cover-');
@@ -1515,6 +1572,7 @@ export function InteractiveDesignStudio({ data, setData, project, concept, dupli
   const onCanvasPointerMove = event => {
     const interaction = interactionRef.current;
     if (!interaction) return;
+    if (event.pointerType === 'pen' || event.pointerType === 'touch') event.preventDefault();
     const point = canvasPoint(event);
     if (interaction.type === 'mask') {
       const target = draftRef.current.objects.find(item => item.objectId === interaction.targetObjectId);
@@ -1601,11 +1659,15 @@ export function InteractiveDesignStudio({ data, setData, project, concept, dupli
       commit(current => ({ ...current, objects: [...current.objects, object], areas: [...current.areas, area] }), 'Design area added');
       setSelectedId(object.objectId); setSelectedIds([object.objectId]); setTool('select');
     } else addObject(object);
+    if (interaction.tool === 'bed') onGuideAction?.('bed-drawn');
+    if (interaction.tool.startsWith('cover-')) onGuideAction?.('cover-drawn');
+    if (interaction.tool === 'border') onGuideAction?.('border-drawn');
     event.currentTarget?.releasePointerCapture?.(event.pointerId);
   };
 
   const onObjectPointerDown = (event, object) => {
     event.stopPropagation();
+    if (event.pointerType === 'pen') event.preventDefault();
     const groupedIds = object.groupId ? draftRef.current.objects.filter(item => item.groupId === object.groupId && active(item)).map(item => item.objectId) : [object.objectId];
     const nextIds = event.shiftKey ? [...new Set([...selectedIds, object.objectId])] : groupedIds;
     setSelectedId(object.objectId);
@@ -1714,20 +1776,21 @@ export function InteractiveDesignStudio({ data, setData, project, concept, dupli
     });
     setData(current => ({ ...current, designVersions: [record, ...current.designVersions] }));
     persist(true);
-    setSaveState('Consultation revision saved');
   };
   return <div className={`interactive-design-studio${consultation ? ' consultation-mode' : ''}${fullscreen ? ' editor-fullscreen' : ''}`}>
     <header className="interactive-studio-header glass">
       <div><span>{independent ? 'Independent Design · Interactive Studio' : 'Phase 6 · Interactive Design Studio'}</span><h3>{concept.name}</h3><p>{concept.description || 'Visual landscape planning workspace'}</p></div>
-      <div className="studio-save-cluster"><span className={`save-status ${dirty ? 'saving' : 'saved'}`} role="status">{saveState}</span><button type="button" onClick={() => persist(true)}>Save now</button><button type="button" onClick={() => updateSettings({ viewportZoom: 1, viewportPanX: 0, viewportPanY: 0 }, 'View reset')}>Reset view</button><button type="button" onClick={() => setFullscreen(value => !value)}>{fullscreen ? 'Exit full screen' : 'Full screen'}</button>{!independent && <button type="button" onClick={() => setConsultation(true)}>Client presentation</button>}</div>
+      <div className="studio-save-cluster"><span className={`save-status ${saveState === 'Save failed' ? 'failed' : dirty || saveState === 'Saving…' ? 'saving' : 'saved'}`} role="status">{saveState}</span><button type="button" data-guide-target="save-design" onClick={() => persist(true)} title="Save this canvas to device storage">Save now</button><button type="button" onClick={() => updateSettings({ viewportZoom: 1, viewportPanX: 0, viewportPanY: 0 }, 'View reset')} title="Return canvas zoom and position to the starting view">Reset view</button><button type="button" onClick={() => setFullscreen(value => !value)} title="Use more of the screen for the editor">{fullscreen ? 'Exit full screen' : 'Full screen'}</button><button type="button" onClick={onOpenGuide}>Design District Guide</button>{!independent && <button type="button" onClick={() => setConsultation(true)}>Client presentation</button>}</div>
     </header>
+    {saveState === 'Save failed' && <p className="studio-save-help" role="alert">Keep this page open. Export a backup, check this device’s available storage, then choose Save now again. No records were deleted.</p>}
     <WorkspaceToolbar tool={tool} setTool={setTool} undo={undo} redo={redo} canUndo={history.length > 0} canRedo={future.length > 0} zoom={draft.settings.viewportZoom} setZoom={value => updateSettings({ viewportZoom: value }, 'Canvas zoomed')} consultation={consultation} />
+    <p className="selected-tool-guidance" role="status"><strong>{TOOLS.find(([id]) => id === tool)?.[1] || 'Select'} selected.</strong> {TOOL_HELP[tool] || 'Choose a tool, then use the canvas.'}<span> Apple Pencil draws without page scrolling. Choose Pan before moving the canvas.</span></p>
     <QuickAddControls tool={tool} draft={draft} data={data} project={project} quick={quick} setQuick={setQuick} />
     {libraryOpen && <DesignElementLibrary elements={data.designElementLibrary} onPlace={placeElement} onClose={() => setLibraryOpen(false)} />}
-    <BackgroundControls settings={draft.settings} photos={photos} updateSettings={updateSettings} />
+    <BackgroundControls settings={draft.settings} photos={photos} updateSettings={updateSettings} onGuideAction={onGuideAction} />
     <div className="mobile-panel-toggles"><button type="button" onClick={() => setShowLayers(value => !value)}>{showLayers ? 'Close layers' : 'Open layers'}</button><button type="button" onClick={() => setShowInspector(value => !value)}>{showInspector ? 'Close object controls' : 'Open object controls'}</button><button type="button" onClick={() => setLibraryOpen(true)}>Element library</button></div>
     <div className="interactive-studio-grid">
-      {!consultation && showLayers && <LayerManager layers={draft.layers} objects={draft.objects} updateLayers={updateLayers} selectLayer={setSelectedLayerId} selectedLayerId={currentLayer?.layerId} />}
+      {!consultation && showLayers && <LayerManager layers={draft.layers} objects={draft.objects} updateLayers={updateLayers} selectLayer={setSelectedLayerId} selectedLayerId={selectedLayerId} onClose={() => setShowLayers(false)} />}
       <section className="interactive-canvas-column">
         <div className="interactive-canvas-frame glass">
           <DesignScene
@@ -1745,6 +1808,7 @@ export function InteractiveDesignStudio({ data, setData, project, concept, dupli
             onPointerDown={onCanvasPointerDown}
             onPointerMove={onCanvasPointerMove}
             onPointerUp={finishInteraction}
+            gestureMode={tool === 'select' ? 'browse' : 'draw'}
           />
           <div className="canvas-planning-notice">Approximate visual planning workspace · not survey, engineering, CAD, GIS, or construction documentation</div>
         </div>
@@ -1754,8 +1818,9 @@ export function InteractiveDesignStudio({ data, setData, project, concept, dupli
           <button type="button" onClick={() => updateSettings({ scaleCalibration: { ...draft.settings.scaleCalibration, calibrated: false, pixelsPerFoot: 0, pixelsPerInch: 0, referenceObjectId: '' } }, 'Scale reset')}>Reset scale</button>
           <span>{draft.settings.scaleCalibration?.calibrated ? `Approx. scale · ${number(draft.settings.scaleCalibration.pixelsPerFoot).toFixed(2)} px/ft` : 'Scale uncalibrated'}</span>
         </div>
+        {!draft.objects.some(item => item.objectType === 'plant' && active(item)) && <p className="canvas-empty-hint">No plants placed yet. Choose Plant or open the Element Library to add the first one.</p>}
       </section>
-      {!consultation && showInspector && <ObjectInspector object={selected} layers={draft.layers} objects={draft.objects} settings={draft.settings} masks={draft.masks} selectionCount={selectedIds.length} patchObject={patchSelected} duplicateObject={duplicateSelected} deleteObject={deleteSelected} moveZ={moveZ} calibrate={calibrate} groupSelected={groupSelected} ungroupSelected={ungroupSelected} />}
+      {!consultation && showInspector && <ObjectInspector object={selected} layers={draft.layers} objects={draft.objects} settings={draft.settings} masks={draft.masks} selectionCount={selectedIds.length} patchObject={patchSelected} duplicateObject={duplicateSelected} deleteObject={deleteSelected} moveZ={moveZ} calibrate={calibrate} groupSelected={groupSelected} ungroupSelected={ungroupSelected} onClose={() => setShowInspector(false)} />}
     </div>
     {consultation && <div className="consultation-dock glass">
       <div><span>Live Consultation Mode</span><strong>Private notes, internal costs, nursery details, profit, and administration are hidden.</strong></div>

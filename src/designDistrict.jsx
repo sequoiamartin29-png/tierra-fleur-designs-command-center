@@ -3,6 +3,7 @@ import './designDistrict.css';
 import { addTimelineEvent, upsertProjectPlant } from './projectEngine.js';
 import { InteractiveDesignStudio } from './designStudioWorkspace.jsx';
 import { createCanvasSettings, createDefaultDesignLayers, createDesignObject } from './designEngine.js';
+import { DesignGuide, PracticeDesign, WalkthroughOverlay, hasSavedPracticeDesign, useDesignGuide } from './designGuide.jsx';
 import {
   prepareProjectPhoto,
   PROJECT_PHOTO_ACCEPT,
@@ -262,7 +263,7 @@ export function DesignDashboardCards({ data, openDesign }) {
   </section>;
 }
 
-function DesignStartHub({ data, setData, selectProject, selectIndependent }) {
+function DesignStartHub({ data, setData, selectProject, selectIndependent, onGuideAction }) {
   const [mode, setMode] = useState('project-photo');
   const [form, setForm] = useState({ name: '', clientId: '', projectId: '', photoId: '', sourceDesignId: '' });
   const projects = data.projects.filter(item => !item.archived && (!form.clientId || item.clientId === form.clientId));
@@ -311,7 +312,7 @@ function DesignStartHub({ data, setData, selectProject, selectIndependent }) {
   };
   return <section className="design-start-hub glass">
     <div className="design-start-heading"><div><span>Design District Pro</span><h3>Start a manual photo design</h3><p>Choose a starting point. Every cover, mask, plant, path, and material remains under your control.</p></div><strong>Manual editor · no AI generation</strong></div>
-    <div className="design-start-options">{cards.map(([id, title, text]) => <button type="button" key={id} className={mode === id ? 'active' : ''} onClick={() => { setMode(id); if (['continue', 'history'].includes(id)) goToGallery(id === 'history'); }}><span aria-hidden="true">{id === 'client-photo' ? '◉' : id === 'project-photo' ? '▣' : id === 'independent' ? '✦' : id === 'continue' ? '↗' : id === 'duplicate' ? '⧉' : '◷'}</span><strong>{title}</strong><small>{text}</small></button>)}</div>
+    <div className="design-start-options" data-guide-target="design-type">{cards.map(([id, title, text]) => <button type="button" key={id} className={mode === id ? 'active' : ''} onClick={() => { setMode(id); onGuideAction?.('design-type'); if (['continue', 'history'].includes(id)) goToGallery(id === 'history'); }}><span aria-hidden="true">{id === 'client-photo' ? '◉' : id === 'project-photo' ? '▣' : id === 'independent' ? '✦' : id === 'continue' ? '↗' : id === 'duplicate' ? '⧉' : '◷'}</span><strong>{title}</strong><small>{text}</small></button>)}</div>
     {!['continue', 'history'].includes(mode) && <form className="design-start-form" onSubmit={submit}>
       {mode !== 'duplicate' && <label>Design name<input required value={form.name} onChange={event => setForm({ ...form, name: event.target.value })} placeholder="Front arrival garden concept" /></label>}
       {['client-photo', 'project-photo'].includes(mode) && <label>Client<select value={form.clientId} onChange={event => setForm({ ...form, clientId: event.target.value, projectId: '', photoId: '' })}><option value="">Choose a client</option>{data.clients.filter(item => !item.archived).map(item => <option key={item.clientId || item.id} value={item.clientId || item.id}>{item.name}</option>)}</select></label>}
@@ -324,7 +325,7 @@ function DesignStartHub({ data, setData, selectProject, selectIndependent }) {
   </section>;
 }
 
-function SavedDesignGallery({ data, setData, selectProject, selectIndependent }) {
+function SavedDesignGallery({ data, setData, selectProject, selectIndependent, onOpenGuide }) {
   const [showArchived, setShowArchived] = useState(false);
   useEffect(() => { const handler = () => setShowArchived(true); window.addEventListener('design-gallery-history', handler); return () => window.removeEventListener('design-gallery-history', handler); }, []);
   const concepts = data.designConcepts.filter(item => showArchived ? item.archived : !item.archived).sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
@@ -357,7 +358,7 @@ function SavedDesignGallery({ data, setData, selectProject, selectIndependent })
     }));
   };
   return <section id="saved-design-gallery" className="saved-design-gallery">
-    <div className="saved-gallery-heading"><div><span>Saved Design Gallery</span><h3>{showArchived ? 'Archived design history' : 'Continue a saved design'}</h3></div><button type="button" onClick={() => setShowArchived(value => !value)}>{showArchived ? 'View active' : `Archived (${data.designConcepts.filter(item => item.archived).length})`}</button></div>
+    <div className="saved-gallery-heading"><div><span>Saved Design Gallery</span><h3>{showArchived ? 'Archived design history' : 'Continue a saved design'}</h3></div><div className="saved-gallery-actions"><button type="button" onClick={onOpenGuide}>Design District Guide</button><button type="button" onClick={() => setShowArchived(value => !value)}>{showArchived ? 'View active' : `Archived (${data.designConcepts.filter(item => item.archived).length})`}</button></div></div>
     <div className="saved-design-grid">{concepts.map(concept => {
       const independent = (data.independentDesigns || []).find(item => item.designId === concept.designId);
       const project = data.projects.find(item => item.projectId === concept.projectId);
@@ -365,11 +366,11 @@ function SavedDesignGallery({ data, setData, selectProject, selectIndependent })
       const versions = data.designVersions.filter(item => item.conceptId === concept.designId && !item.archived);
       const favorite = versions.some(item => item.clientSelected || item.favorite);
       return <article className="saved-design-card glass" key={concept.designId}>{(concept.currentPreview || photo?.image) ? <img src={concept.currentPreview || photo?.image} alt="" /> : <div className="saved-design-placeholder">❦</div>}<div><span>{independent ? 'Independent' : `${project?.projectId || 'Unlinked'} · ${project?.name || 'Project'}`}</span><h4>{concept.name}</h4><small>Edited {dateLabel(concept.updatedAt)} · Version {concept.versionNumber || Math.max(1, versions.length)} · {concept.approvalStatus || concept.status}</small><div>{favorite && <b>★ Client favorite</b>}<em>{concept.status}</em></div></div><footer><button className="primary" onClick={() => open(concept)}>{concept.archived ? 'Open history' : 'Open'}</button><button onClick={() => { const value = prompt('Rename this design:', concept.name); if (value?.trim()) patch(concept, { name: value.trim(), designName: value.trim() }); }}>Rename</button><button onClick={() => duplicate(concept)}>Duplicate</button><button onClick={() => patch(concept, { archived: !concept.archived })}>{concept.archived ? 'Restore' : 'Archive'}</button>{concept.archived && <button className="danger" onClick={() => remove(concept)}>Delete</button>}</footer></article>;
-    })}{!concepts.length && <EmptyStudio title={showArchived ? 'No archived designs' : 'No saved designs yet'} text="Create a manual photo design above to begin the gallery." />}</div>
+    })}{!concepts.length && <EmptyStudio title={showArchived ? 'No archived designs' : 'No saved designs yet'} text="Choose a design type above, or open Practice Design to learn the tools without creating a client record." />}</div>
   </section>;
 }
 
-function DesignLanding({ data, setData, selectProject, selectIndependent, openProjectDistrict }) {
+function DesignLanding({ data, setData, selectProject, selectIndependent, openProjectDistrict, onOpenGuide, onOpenPractice, onGuideAction, practiceStarted }) {
   const [independentForm, setIndependentForm] = useState({ name: '', description: '' });
   const [showArchivedIndependent, setShowArchivedIndependent] = useState(false);
   const [pendingDeleteId, setPendingDeleteId] = useState('');
@@ -442,14 +443,14 @@ function DesignLanding({ data, setData, selectProject, selectIndependent, openPr
   return <div className="design-landing">
     <section className="design-landing-hero glass">
       <div><span>Artist’s studio</span><h2>Design District</h2><p>Shape landscape ideas into connected project concepts, palettes, inspiration, measurements, and client-ready stories.</p></div>
-      <span className="design-hero-butterfly" aria-hidden="true">🦋</span>
+      <div className="design-landing-guide-actions"><button type="button" className="primary" onClick={onOpenGuide}>Design District Guide</button><button type="button" onClick={() => { onGuideAction?.('design-type'); onOpenPractice(); }}>Practice Design</button><small>{practiceStarted ? 'Practice design saved on this device. Open it to continue.' : 'No practice design started. Open Practice Design to begin without changing real records.'}</small></div><span className="design-hero-butterfly" aria-hidden="true">🦋</span>
       <div className="design-landing-metrics">
         <div><strong>{projects.length}</strong><span>Project studios</span></div>
         <div><strong>{concepts.length}</strong><span>Saved concepts</span></div>
         <div><strong>{awaiting}</strong><span>Concepts awaiting approval</span></div>
       </div>
     </section>
-    <DesignStartHub data={data} setData={setData} selectProject={selectProject} selectIndependent={selectIndependent} />
+    <DesignStartHub data={data} setData={setData} selectProject={selectProject} selectIndependent={selectIndependent} onGuideAction={onGuideAction} />
     <section className="independent-design-entry glass">
       <div className="independent-entry-copy"><span>Ideas before projects</span><h3>Independent Design</h3><p>Create a complete landscape idea without choosing a client or project. Link it later without copying the design or any canvas objects.</p><div className="independent-feature-chips">{['Drawing tools', 'Plant & material markers', 'Measurements', 'Layers', 'Notes', 'Versions'].map(item => <span key={item}>{item}</span>)}</div></div>
       <form onSubmit={createIndependent}><label>Design name<input required value={independentForm.name} onChange={event => setIndependentForm({ ...independentForm, name: event.target.value })} placeholder="Courtyard herb garden" /></label><label>Inspiration or intent<textarea value={independentForm.description} onChange={event => setIndependentForm({ ...independentForm, description: event.target.value })} placeholder="What would you like to explore?" /></label><button className="primary">Create Independent Design</button></form>
@@ -464,7 +465,7 @@ function DesignLanding({ data, setData, selectProject, selectIndependent, openPr
         return <article className="glass independent-design-card" key={record.independentDesignId}><div><span className="independent-badge">Independent Design</span>{record.projectId && <span className="linked-badge">Linked to {record.projectId}</span>}</div><h4>{record.name}</h4><p>{record.description || 'A free-standing garden idea ready for the canvas.'}</p><dl><div><dt>Objects</dt><dd>{objectCount}</dd></div><div><dt>Versions</dt><dd>{versionCount}</dd></div><div><dt>Last edited</dt><dd>{dateLabel(record.updatedAt || concept?.updatedAt)}</dd></div></dl>{project && <small>{project.name} · canvas remains the original record</small>}<div>{record.archived ? <><button onClick={() => setIndependentArchive(record, false)}>Restore</button><button className="danger" onClick={() => removeIndependent(record)}>{pendingDeleteId === record.independentDesignId ? 'Confirm permanent delete' : 'Delete archived design'}</button></> : <><button className="primary" onClick={() => selectIndependent(record.independentDesignId)}>Open Independent Design</button><button onClick={() => setIndependentArchive(record, true)}>Archive</button></>}</div></article>;
       })}{!independentDesigns.length && <EmptyStudio title={showArchivedIndependent ? 'No archived independent designs' : 'No Independent Designs yet'} text="Name an idea above to open the garden canvas without a client or project." />}</div>
     </section>
-    <SavedDesignGallery data={data} setData={setData} selectProject={selectProject} selectIndependent={selectIndependent} />
+    <SavedDesignGallery data={data} setData={setData} selectProject={selectProject} selectIndependent={selectIndependent} onOpenGuide={onOpenGuide} />
     <section className="design-project-gallery">
       {projects.map(project => {
         const projectConcepts = concepts.filter(item => item.projectId === project.projectId);
@@ -519,7 +520,7 @@ function PropertyOverview({ data, project, openProject, openSketch, setTab }) {
   </div>;
 }
 
-function SitePhotos({ data, setData, projectId, independent = false }) {
+function SitePhotos({ data, setData, projectId, independent = false, onGuideAction }) {
   const blank = { stage: 'Before', caption: '', photoDate: today(), tags: '' };
   const [form, setForm] = useState(blank);
   const [upload, setUpload] = useState(null);
@@ -634,6 +635,7 @@ function SitePhotos({ data, setData, projectId, independent = false }) {
     setPhotoError('');
     setPhotoLoading(false);
     formElement.reset();
+    onGuideAction?.('photo-added');
   };
   const editPhoto = photo => {
     releasePreparedProjectPhoto(upload);
@@ -676,7 +678,7 @@ function SitePhotos({ data, setData, projectId, independent = false }) {
     }
   };
   return <div className="design-photo-page">
-    <form className="panel glass design-photo-form" onSubmit={savePhoto} noValidate>
+    <form className="panel glass design-photo-form" onSubmit={savePhoto} noValidate data-guide-target="property-photo">
       <div><span>Property photography</span><h3>{editingId ? 'Edit property photo' : 'Add a property photo'}</h3><p>Organize the visual story from arrival through completion.</p></div>
       <label>Category<select value={form.stage} onChange={event => setForm({ ...form, stage: event.target.value })}>{['Before', 'Progress', 'Finished'].map(item => <option key={item}>{item}</option>)}</select></label>
       <label>Photo date<input required type="date" value={form.photoDate} onChange={event => setForm({ ...form, photoDate: event.target.value })} /></label>
@@ -803,7 +805,7 @@ function CanvasWorkspace({ concept, photos, measurements, saveConcept, duplicate
   </div>;
 }
 
-function DesignConcepts({ data, setData, project, canvasOnly = false, openPresentation, initialDesignId = '' }) {
+function DesignConcepts({ data, setData, project, canvasOnly = false, openPresentation, initialDesignId = '', storageStatus, onOpenGuide, onGuideAction }) {
   const projectId = project.projectId;
   const [activeId, setActiveId] = useState(initialDesignId);
   const [name, setName] = useState('');
@@ -948,7 +950,7 @@ function DesignConcepts({ data, setData, project, canvasOnly = false, openPresen
       {canvasOnly ? <div className="concept-ribbon-title"><span>Saved design workspace</span><h3>Design Canvas</h3><p>Select a concept, then work with its photo background, layers, markers, and measurements.</p></div> : <form onSubmit={create}><div><span>Multiple versions welcome</span><h3>Design Concepts</h3></div><input required aria-label="New concept name" placeholder="Concept A, Spring Version, Premium Version…" value={name} onChange={event => setName(event.target.value)} /><textarea aria-label="New concept description" placeholder="Describe the design direction and client-facing idea" value={description} onChange={event => setDescription(event.target.value)} /><select aria-label="New concept status" value={newStatus} onChange={event => setNewStatus(event.target.value)}>{['Draft', 'Client Review', 'Awaiting Approval', 'Approved', 'Revision Requested'].map(item => <option key={item}>{item}</option>)}</select><button className="primary">Create concept</button></form>}
       <div>{concepts.map(concept => <button key={concept.designId} className={active?.designId === concept.designId ? 'active' : ''} onClick={() => setActiveId(concept.designId)} aria-label={`Open ${concept.name}`}><span>{concept.status}</span><strong>{concept.name}</strong><small>{dateLabel(concept.updatedAt)}</small></button>)}</div>
     </section>
-    {active && canvasOnly && <InteractiveDesignStudio key={active.designId} data={data} setData={setData} project={project} concept={active} duplicateConcept={duplicate} openPresentation={openPresentation} />}
+    {active && canvasOnly && <InteractiveDesignStudio key={active.designId} data={data} setData={setData} project={project} concept={active} duplicateConcept={duplicate} openPresentation={openPresentation} storageStatus={storageStatus} onOpenGuide={onOpenGuide} onGuideAction={onGuideAction} />}
     {active && !canvasOnly && <section className="concept-detail-card glass">
       <div><span>Reopened saved concept</span><h3>{active.name}</h3><p>Last saved {dateLabel(active.updatedAt)}</p></div>
       <label>Concept name<input value={detailDraft.name} onChange={event => setDetailDraft({ ...detailDraft, name: event.target.value })} /></label>
@@ -1222,7 +1224,7 @@ function Measurements({ data, setData, projectId }) {
   </div>;
 }
 
-function IndependentDesignWorkspace({ data, setData, record, onBack }) {
+function IndependentDesignWorkspace({ data, setData, record, onBack, storageStatus, onOpenGuide, onGuideAction }) {
   const [tab, setTab] = useState('Overview');
   const [details, setDetails] = useState({ name: record.name || '', description: record.description || '', notes: record.notes || '' });
   const [link, setLink] = useState({ clientId: record.clientId || '', projectId: record.projectId || '' });
@@ -1283,45 +1285,56 @@ function IndependentDesignWorkspace({ data, setData, record, onBack }) {
 
   return <div className="page design-district-page independent-design-workspace">
     <header className="design-studio-header glass"><button onClick={onBack}>← Design District</button><div><span>Independent Design{record.projectId ? ` · Linked to ${record.projectId}` : ' · No client or project required'}</span><h2>{record.name}</h2><p>{record.projectId ? `${data.clients.find(item => item.clientId === record.clientId)?.name || 'Client'} · original canvas retained` : 'A standalone Tierra Fleur landscape idea'}</p></div><span className="design-studio-flourish" aria-hidden="true">🦋</span></header>
-    <nav className="design-studio-tabs" aria-label="Independent Design sections">{['Overview', 'Property or Inspiration Photo', 'Design Canvas'].map(item => <button key={item} className={tab === item ? 'active' : ''} onClick={() => setTab(item)}>{item}</button>)}</nav>
+    <nav className="design-studio-tabs" aria-label="Independent Design sections">{['Overview', 'Property or Inspiration Photo', 'Design Canvas'].map(item => <button key={item} data-guide-target={item === 'Design Canvas' ? 'design-canvas' : undefined} className={tab === item ? 'active' : ''} onClick={() => { setTab(item); if (item === 'Design Canvas') onGuideAction?.('canvas-opened'); }}>{item}</button>)}</nav>
     {tab === 'Overview' && <div className="independent-overview-grid"><form className="panel glass district-form" onSubmit={saveDetails}><span className="district-eyebrow">Independent Design details</span><h3>Name and notes</h3><label>Design name<input required value={details.name} onChange={event => setDetails({ ...details, name: event.target.value })} /></label><label>Design intent<textarea value={details.description} onChange={event => setDetails({ ...details, description: event.target.value })} /></label><label>Personal notes<textarea value={details.notes} onChange={event => setDetails({ ...details, notes: event.target.value })} /></label><button className="primary">Save details</button><button type="button" onClick={archive}>Archive Independent Design</button></form>
       <section className="panel glass independent-overview-card"><span className="independent-badge">Independent Design</span><h3>{record.name}</h3><dl><div><dt>Date created</dt><dd>{dateLabel(record.createdAt)}</dd></div><div><dt>Last edited</dt><dd>{dateLabel(record.updatedAt || concept.updatedAt)}</dd></div><div><dt>Canvas objects</dt><dd>{objectCount}</dd></div><div><dt>Photos</dt><dd>{photoCount}</dd></div><div><dt>Notes</dt><dd>{noteCount}</dd></div><div><dt>Versions</dt><dd>{versionCount}</dd></div></dl><p><strong>Background:</strong> {photoCount ? 'Property or inspiration photo available' : record.backgroundKind || 'Cream garden paper placeholder'}</p></section>
       <section className="panel glass independent-link-card"><span className="district-eyebrow">Optional future connection</span><h3>{record.projectId ? 'Linked without duplication' : 'Link to a client and project later'}</h3>{record.projectId ? <p>This original design now belongs to <strong>{record.projectId}</strong>. Its concept ID, canvas settings, layers, objects, notes, and versions were reassigned in place.</p> : <><label>Client<select value={link.clientId} onChange={event => setLink({ clientId: event.target.value, projectId: '' })}><option value="">Choose a client</option>{clients.map(item => <option key={item.clientId} value={item.clientId}>{item.name}</option>)}</select></label><label>Project<select value={link.projectId} onChange={event => setLink({ ...link, projectId: event.target.value })}><option value="">Choose that client’s project</option>{projects.map(item => <option key={item.projectId} value={item.projectId}>{item.projectId} · {item.name}</option>)}</select></label><button className="primary" disabled={!link.clientId || !link.projectId} onClick={linkToProject}>Link original design</button><small>This changes ownership fields only. It never copies the design or canvas objects.</small></>}</section></div>}
-    {tab === 'Property or Inspiration Photo' && <SitePhotos data={data} setData={setData} projectId={ownerProjectId} independent={!record.projectId} />}
-    {tab === 'Design Canvas' && <InteractiveDesignStudio key={concept.designId} data={data} setData={setData} project={project} concept={concept} independent />}
+    {tab === 'Property or Inspiration Photo' && <SitePhotos data={data} setData={setData} projectId={ownerProjectId} independent={!record.projectId} onGuideAction={onGuideAction} />}
+    {tab === 'Design Canvas' && <InteractiveDesignStudio key={concept.designId} data={data} setData={setData} project={project} concept={concept} independent storageStatus={storageStatus} onOpenGuide={onOpenGuide} onGuideAction={onGuideAction} />}
   </div>;
 }
 
-export function DesignDistrict({ data, setData, initialProjectId = '', openProject, openProjectDistrict, openSketch, openPresentation }) {
+export function DesignDistrict({ data, setData, initialProjectId = '', openProject, openProjectDistrict, openSketch, openPresentation, storageStatus = 'saved' }) {
   const [selectedId, setSelectedId] = useState(initialProjectId);
   const [selectedDesignId, setSelectedDesignId] = useState('');
   const [selectedIndependentId, setSelectedIndependentId] = useState('');
+  const [practiceOpen, setPracticeOpen] = useState(false);
+  const [practiceStarted, setPracticeStarted] = useState(hasSavedPracticeDesign);
   const [tab, setTab] = useState('Overview');
+  const { guideOpen, setGuideOpen, guide, startWalkthrough, dismissWalkthrough, recordGuideAction } = useDesignGuide();
   useEffect(() => {
     if (initialProjectId) {
       setSelectedId(initialProjectId);
       setTab('Overview');
     }
   }, [initialProjectId]);
+  const openGuide = () => setGuideOpen(true);
+  const openPractice = () => { setGuideOpen(false); setPracticeOpen(true); recordGuideAction('design-type'); };
+  const withGuide = content => <>
+    {content}
+    <DesignGuide open={guideOpen} completed={guide.completed} onClose={() => setGuideOpen(false)} onStartWalkthrough={startWalkthrough} onOpenPractice={openPractice} />
+    <WalkthroughOverlay guide={guide} onDismiss={dismissWalkthrough} onOpenGuide={openGuide} />
+  </>;
+  if (practiceOpen) return withGuide(<PracticeDesign onBack={() => setPracticeOpen(false)} onOpenGuide={openGuide} onGuideAction={recordGuideAction} onStarted={() => setPracticeStarted(true)} onRemoved={() => setPracticeStarted(false)} />);
   const independentDesign = (data.independentDesigns || []).find(item => item.independentDesignId === selectedIndependentId && !item.archived);
-  if (independentDesign) return <IndependentDesignWorkspace data={data} setData={setData} record={independentDesign} onBack={() => setSelectedIndependentId('')} />;
+  if (independentDesign) return withGuide(<IndependentDesignWorkspace data={data} setData={setData} record={independentDesign} onBack={() => setSelectedIndependentId('')} storageStatus={storageStatus} onOpenGuide={openGuide} onGuideAction={recordGuideAction} />);
   const project = data.projects.find(item => item.projectId === selectedId && !item.archived);
-  if (!project) return <DesignLanding data={data} setData={setData} openProjectDistrict={openProjectDistrict} selectIndependent={setSelectedIndependentId} selectProject={(projectId, designId = '') => { setSelectedId(projectId); setSelectedDesignId(designId); setTab(designId ? 'Design Canvas' : 'Overview'); }} />;
-  return <div className="page design-district-page">
+  if (!project) return withGuide(<DesignLanding data={data} setData={setData} openProjectDistrict={openProjectDistrict} selectIndependent={setSelectedIndependentId} selectProject={(projectId, designId = '') => { setSelectedId(projectId); setSelectedDesignId(designId); setTab(designId ? 'Design Canvas' : 'Overview'); if (designId) recordGuideAction('canvas-opened'); }} onOpenGuide={openGuide} onOpenPractice={openPractice} onGuideAction={recordGuideAction} practiceStarted={practiceStarted} />);
+  return withGuide(<div className="page design-district-page">
     <header className="design-studio-header glass">
       <button onClick={() => setSelectedId('')}>← Design District</button>
       <div><span>{project.projectId} • Project Design Studio</span><h2>{project.name}</h2><p>{project.propertyAddress || 'Property address not added'}</p></div>
       <span className="design-studio-flourish" aria-hidden="true">✿</span>
     </header>
-    <nav className="design-studio-tabs" aria-label="Design Studio sections">{DESIGN_TABS.map(item => <button key={item} className={tab === item ? 'active' : ''} onClick={() => setTab(item)}>{item}</button>)}</nav>
+    <nav className="design-studio-tabs" aria-label="Design Studio sections">{DESIGN_TABS.map(item => <button key={item} data-guide-target={item === 'Design Canvas' ? 'design-canvas' : undefined} className={tab === item ? 'active' : ''} onClick={() => { setTab(item); if (item === 'Design Canvas') recordGuideAction('canvas-opened'); }}>{item}</button>)}</nav>
     {tab === 'Overview' && <PropertyOverview data={data} project={project} openProject={openProject} openSketch={openSketch} setTab={setTab} />}
-    {tab === 'Property Photos' && <SitePhotos data={data} setData={setData} projectId={project.projectId} />}
+    {tab === 'Property Photos' && <SitePhotos data={data} setData={setData} projectId={project.projectId} onGuideAction={recordGuideAction} />}
     {tab === 'Design Concepts' && <DesignConcepts data={data} setData={setData} project={project} initialDesignId={selectedDesignId} />}
-    {tab === 'Design Canvas' && <DesignConcepts data={data} setData={setData} project={project} canvasOnly openPresentation={openPresentation} initialDesignId={selectedDesignId} />}
+    {tab === 'Design Canvas' && <DesignConcepts data={data} setData={setData} project={project} canvasOnly openPresentation={openPresentation} initialDesignId={selectedDesignId} storageStatus={storageStatus} onOpenGuide={openGuide} onGuideAction={recordGuideAction} />}
     {tab === 'Plant Palette' && <PlantPalette data={data} setData={setData} projectId={project.projectId} />}
     {tab === 'Materials' && <MaterialLibrary data={data} setData={setData} projectId={project.projectId} />}
     {tab === 'Inspiration Board' && <InspirationBoard data={data} setData={setData} projectId={project.projectId} />}
     {tab === 'Notes' && <DesignNotes data={data} setData={setData} projectId={project.projectId} />}
     {tab === 'Measurements' && <Measurements data={data} setData={setData} projectId={project.projectId} />}
-  </div>;
+  </div>);
 }

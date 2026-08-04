@@ -469,6 +469,7 @@ function App() {
   const [focusedCalendarEventId, setFocusedCalendarEventId] = useState('');
   const [presentationRequest, setPresentationRequest] = useState(null);
   const [storageError, setStorageError] = useState('');
+  const [storageStatus, setStorageStatus] = useState('saved');
   const [attachmentStorageError, setAttachmentStorageError] = useState('');
 
   useEffect(() => {
@@ -494,13 +495,19 @@ function App() {
   }, []);
 
   useEffect(() => {
-    if (!storageReady || startup.error) return;
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(serializeDataForStorage(data)));
-      setStorageError('');
-    } catch {
-      setStorageError('This device could not save the latest record change. Your existing records have not been erased. Export a backup and try again.');
-    }
+    if (!storageReady || startup.error) return undefined;
+    setStorageStatus('saving');
+    const timer = setTimeout(() => {
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(serializeDataForStorage(data)));
+        setStorageError('');
+        setStorageStatus('saved');
+      } catch {
+        setStorageStatus('failed');
+        setStorageError('This device could not save the latest record change. Your existing records have not been erased. Keep this page open, export a backup, check available storage, and try again.');
+      }
+    }, 0);
+    return () => clearTimeout(timer);
   }, [data, storageReady]);
 
   useEffect(() => {
@@ -611,7 +618,7 @@ function App() {
         {view === 'calendar' && <CalendarDistrict data={data} setData={setData} initialEventId={focusedCalendarEventId} navigate={nav} openProject={openProject} />}
         {view === 'clients' && <ClientDistrict data={data} setData={setData} openProject={openProject} />}
         {view === 'projects' && <ProjectDistrict data={data} setData={setData} initialProjectId={focusedProjectId} openDesign={openDesign} openClients={() => nav('clients')} openEstimates={() => nav('estimates')} openFinance={() => nav('finance')} openPresentation={openPresentation} />}
-        {view === 'design' && <DesignDistrict data={data} setData={setData} initialProjectId={focusedProjectId} openProject={openProject} openProjectDistrict={() => nav('projects')} openSketch={openSketch} openPresentation={openPresentation} />}
+        {view === 'design' && <DesignDistrict data={data} setData={setData} initialProjectId={focusedProjectId} openProject={openProject} openProjectDistrict={() => nav('projects')} openSketch={openSketch} openPresentation={openPresentation} storageStatus={storageStatus} />}
         {view === 'sketch' && <SketchStudio projects={data.projects} initialProjectId={focusedProjectId} />}
         {view === 'finance' && <FinanceDistrict data={data} setData={setData} openProject={openProject} />}
         {view === 'money' && <Expenses data={data} setData={setData} />}
