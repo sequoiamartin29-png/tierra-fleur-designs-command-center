@@ -19,10 +19,18 @@ import {
   createDesignObject,
   createDesignVersion,
   designCostSummary,
+  matureSpreadRadius,
   measurementLabel,
   spacingNotice,
 } from './designEngine.js';
 import { addTimelineEvent, createProjectPlantRecord } from './projectEngine.js';
+import {
+  DESIGN_VIEW_STYLES,
+  DESIGN_VISUAL_CATEGORIES,
+  DESIGN_VISUAL_SPRITE_PATH,
+  getDesignVisualElement,
+  resolveDesignVisualKey,
+} from './designVisualLibrary.js';
 
 const now = () => new Date().toISOString();
 const uid = prefix => `${prefix}-${crypto.randomUUID()}`;
@@ -82,19 +90,13 @@ const TOOL_HELP = {
   overlay: 'Add a site-condition overlay.', feature: 'Tap to place a property feature marker.',
 };
 
-const SYMBOLS = [
-  ['canopy', 'Canopy circle'],
-  ['shrub', 'Shrub circle'],
-  ['perennial-cluster', 'Perennial cluster'],
-  ['groundcover', 'Groundcover patch'],
-  ['vine', 'Vine marker'],
-  ['container', 'Container marker'],
-  ['raised-bed', 'Raised-bed marker'],
-  ['tree', 'Tree icon'],
-  ['fruit-tree', 'Fruit-tree icon'],
-  ['herb', 'Herb icon'],
-  ['vegetable', 'Vegetable icon'],
-  ['custom', 'Custom image marker'],
+const QUICK_PLANT_VISUALS = [
+  ['mixed-perennial', 'Mixed perennial grouping'],
+  ['rounded-evergreen-shrub', 'Rounded evergreen shrub'],
+  ['ornamental-grass', 'Ornamental grass'],
+  ['small-ornamental-tree', 'Small ornamental tree'],
+  ['apple-tree', 'Apple tree'],
+  ['evergreen-tree', 'Evergreen tree'],
 ];
 
 const MATERIAL_TYPES = [
@@ -131,22 +133,13 @@ function pathData(points = []) {
   return points.map((point, index) => `${index ? 'L' : 'M'} ${point.x} ${point.y}`).join(' ');
 }
 
-function SymbolMark({ symbol }) {
-  const mark = {
-    canopy: '✤',
-    shrub: '❉',
-    'perennial-cluster': '⁕',
-    groundcover: '❈',
-    vine: '⌁',
-    container: '♢',
-    'raised-bed': '▱',
-    tree: '♧',
-    'fruit-tree': '♣',
-    herb: '❧',
-    vegetable: '✣',
-    custom: '✦',
-  }[symbol] || '✤';
-  return <>{mark}</>;
+function VisualAsset({ assetKey, viewStyle = 'front', className = '', title = '', x = 0, y = 0, width = '100%', height = '100%' }) {
+  const resolvedKey = resolveDesignVisualKey({ assetKey });
+  const resolvedView = ['front', 'plan', 'symbol'].includes(viewStyle) ? viewStyle : 'front';
+  const href = `${DESIGN_VISUAL_SPRITE_PATH}#${resolvedKey}-${resolvedView}`;
+  return <svg className={`design-visual-asset ${className}`.trim()} x={x} y={y} width={width} height={height} viewBox="0 0 160 160" preserveAspectRatio="xMidYMid meet" overflow="visible" role={title ? 'img' : undefined} aria-hidden={title ? undefined : true} aria-label={title || undefined}>
+    <use href={href} />
+  </svg>;
 }
 
 function ObjectGraphic({ object, selected = false, compact = false }) {
@@ -184,8 +177,7 @@ function ObjectGraphic({ object, selected = false, compact = false }) {
   }
   if (object.objectType === 'plant') {
     return <>
-      <circle cx={width / 2} cy={height / 2} r={Math.max(8, Math.min(width, height) / 2 - 3)} fill={fill} fillOpacity={style.fillOpacity ?? 0.42} stroke={stroke} strokeWidth={selected ? 5 : 3} strokeDasharray={dash} />
-      <text x={width / 2} y={height / 2 + 3} dominantBaseline="middle" textAnchor="middle" fill={stroke} fontSize={Math.max(20, Math.min(width, height) * 0.48)}><SymbolMark symbol={style.symbol} /></text>
+      <VisualAsset assetKey={style.assetKey || resolveDesignVisualKey({ ...object, symbol: style.symbol })} viewStyle={style.viewStyle} width={width} height={height} title={compact ? '' : object.label || 'Plant'} />
       {style.showLabel !== false && !compact && <text x={width / 2} y={height + 22} textAnchor="middle" fill={DESIGN_COLORS.charcoal} fontSize="18" className="scene-object-label">{object.label || 'Plant'}</text>}
       {number(style.quantity) > 1 && <g><circle cx={width - 5} cy="7" r="14" fill={DESIGN_COLORS.deepGreen} /><text x={width - 5} y="8" dominantBaseline="middle" textAnchor="middle" fill="white" fontSize="13">×{style.quantity}</text></g>}
     </>;
@@ -214,8 +206,7 @@ function ObjectGraphic({ object, selected = false, compact = false }) {
     </>;
   }
   if (object.objectType === 'landscape') return <>
-    <rect width={width} height={height} rx="18" {...shared} />
-    <text x={width / 2} y={height / 2} dominantBaseline="middle" textAnchor="middle" fill={stroke} fontSize={Math.max(24, Math.min(width, height) * .42)}><SymbolMark symbol={style.symbol || 'custom'} /></text>
+    <VisualAsset assetKey={style.assetKey || resolveDesignVisualKey({ ...object, symbol: style.symbol })} viewStyle={style.viewStyle} width={width} height={height} title={compact ? '' : object.label || 'Landscape element'} />
     {!compact && <text x={width / 2} y={height + 22} textAnchor="middle" fill={DESIGN_COLORS.charcoal} fontSize="18" className="scene-object-label">{object.label}</text>}
   </>;
   if (object.objectType === 'overlay') {
@@ -266,7 +257,6 @@ export function DesignScene({
   const imageX = (DESIGN_CANVAS_WIDTH - imageWidth) / 2 + number(settings?.backgroundPanX);
   const imageY = (DESIGN_CANVAS_HEIGHT - imageHeight) / 2 + number(settings?.backgroundPanY);
   const matureLayer = orderedLayers.find(layer => layer.name === 'Mature Spread');
-  const pixelsPerFoot = number(settings?.scaleCalibration?.pixelsPerFoot);
   const photoClientSafe = Boolean(photo?.safeForPresentation || (photo?.clientVisible && photo?.presentationVisible && photo?.private !== true && photo?.internal !== true));
   const objectMasks = objectId => records(masks).filter(item => active(item) && item.targetObjectId === objectId);
   const selectedSet = new Set(Array.isArray(selectedId) ? selectedId : [selectedId].filter(Boolean));
@@ -316,10 +306,8 @@ export function DesignScene({
     />}
     {settings?.gridVisible && !clientSafe && <rect width={DESIGN_CANVAS_WIDTH} height={DESIGN_CANVAS_HEIGHT} fill="url(#design-grid-pattern)" pointerEvents="none" />}
     {matureLayer?.visible !== false && visibleObjects.filter(item => item.objectType === 'plant').map(object => {
-      const spreadFeet = number(object.style?.customSpreadFeet || object.style?.matureSpreadFeet);
-      const show = spreadFeet > 0 && (settings?.showAllMatureSpread || object.style?.showMatureSpread);
-      if (!show || !pixelsPerFoot) return null;
-      const radius = spreadFeet * pixelsPerFoot / 2;
+      const radius = matureSpreadRadius(object, settings);
+      if (!radius) return null;
       return <circle key={`spread-${object.objectId}`} cx={number(object.x) + number(object.width) / 2} cy={number(object.y) + number(object.height) / 2} r={radius} fill={DESIGN_COLORS.olive} fillOpacity=".08" stroke={DESIGN_COLORS.olive} strokeOpacity=".45" strokeDasharray="10 8" strokeWidth="2" pointerEvents="none" />;
     })}
     {visibleObjects.map(object => {
@@ -473,8 +461,8 @@ function ObjectInspector({ object, layers, objects, settings, masks, selectionCo
         <label>Line style<select value={object.style.lineStyle || 'solid'} onChange={event => patchObject({ style: { ...object.style, lineStyle: event.target.value } }, 'Style changed')}><option>solid</option><option>dashed</option><option>dotted</option></select></label>
       </div>
       {object.objectType === 'label' && <label>Label size<input type="range" min="12" max="54" value={object.style.fontSize || 24} onChange={event => patchObject({ style: { ...object.style, fontSize: number(event.target.value) } }, 'Label size changed')} /></label>}
+      {object.style?.assetKey && <label>Visual view<select value={object.style.viewStyle || 'front'} onChange={event => patchObject({ style: { ...object.style, viewStyle: event.target.value } }, 'Visual view changed')}>{DESIGN_VIEW_STYLES.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>}
       {object.objectType === 'plant' && <>
-        <label>Plant symbol<select value={object.style.symbol || 'canopy'} onChange={event => patchObject({ style: { ...object.style, symbol: event.target.value } }, 'Plant symbol changed')}>{SYMBOLS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
         <div className="inspector-grid"><label>Marker quantity<input type="number" min="1" value={object.style.quantity || 1} onChange={event => patchObject({ style: { ...object.style, quantity: Math.max(1, number(event.target.value)) } }, 'Plant quantity changed')} /></label><label>Mature spread (ft)<input type="number" min="0" step=".5" value={object.style.customSpreadFeet || object.style.matureSpreadFeet || ''} onChange={event => patchObject({ style: { ...object.style, customSpreadFeet: Math.max(0, number(event.target.value)) } }, 'Mature spread changed')} /></label></div>
         <label className="check-row"><input type="checkbox" checked={object.style.showMatureSpread} onChange={event => patchObject({ style: { ...object.style, showMatureSpread: event.target.checked } }, 'Mature spread display changed')} /> Show this mature-spread circle</label>
         <label className="check-row"><input type="checkbox" checked={object.style.showLabel !== false} onChange={event => patchObject({ style: { ...object.style, showLabel: event.target.checked } }, 'Plant label display changed')} /> Show plant label</label>
@@ -540,7 +528,7 @@ function QuickAddControls({ tool, draft, data, project, quick, setQuick }) {
     {tool === 'plant' && <>
       <label>Plant source<select value={quick.plantSource} onChange={event => setQuick({ ...quick, plantSource: event.target.value })}><option value="">Manual visual placeholder</option>{plants.map(item => <option key={`${item.kind}-${item.id}`} value={`${item.kind}|${item.id}`}>{item.label} · {item.kind === 'projectPlant' ? 'Plant Plan' : item.kind === 'palette' ? 'Design Palette' : 'Sourcing'}</option>)}</select></label>
       <label>Placeholder name<input value={quick.plantLabel} onChange={event => setQuick({ ...quick, plantLabel: event.target.value })} placeholder="Plant name" /></label>
-      <label>Symbol<select value={quick.symbol} onChange={event => setQuick({ ...quick, symbol: event.target.value })}>{SYMBOLS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+      <label>Visual<select value={quick.assetKey} onChange={event => setQuick({ ...quick, assetKey: event.target.value })}>{QUICK_PLANT_VISUALS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
     </>}
     {tool === 'material' && <>
       <label>Material<select value={quick.materialId} onChange={event => setQuick({ ...quick, materialId: event.target.value })}><option value="">Manual concept-only placeholder</option>{materials.map(item => <option key={item.materialId} value={item.materialId}>{item.name}</option>)}</select></label>
@@ -907,15 +895,34 @@ function MaterialDraftPanel({ data, setData, project, concept, draft, addMateria
   </section>;
 }
 
-function DesignElementLibrary({ elements, onPlace, onClose }) {
+function DesignElementLibrary({ elements, onPlace, onToggleFavorite, onClose }) {
   const [query, setQuery] = useState('');
   const [category, setCategory] = useState('All');
-  const categories = ['All', ...new Set(elements.filter(active).map(item => item.category))];
-  const filtered = elements.filter(active).filter(item => category === 'All' || item.category === category).filter(item => `${item.name} ${item.commonName} ${item.botanicalName} ${item.category}`.toLowerCase().includes(query.toLowerCase()));
+  const [viewStyle, setViewStyle] = useState('front');
+  const activeElements = elements.filter(active);
+  const available = new Set(activeElements.map(item => item.category));
+  const extraCategories = [...available].filter(item => !DESIGN_VISUAL_CATEGORIES.includes(item)).sort();
+  const categories = ['All', 'Favorites', ...DESIGN_VISUAL_CATEGORIES.filter(item => available.has(item)), ...extraCategories];
+  const search = query.trim().toLowerCase();
+  const filtered = activeElements
+    .filter(item => category === 'All' || (category === 'Favorites' ? item.favorite : item.category === category))
+    .filter(item => `${item.name} ${item.commonName} ${item.botanicalName} ${item.category}`.toLowerCase().includes(search))
+    .sort((a, b) => Number(Boolean(b.favorite)) - Number(Boolean(a.favorite)) || String(b.lastUsedAt || '').localeCompare(String(a.lastUsedAt || '')) || String(a.name).localeCompare(String(b.name)));
+  const recent = activeElements.filter(item => item.lastUsedAt).sort((a, b) => String(b.lastUsedAt).localeCompare(String(a.lastUsedAt))).slice(0, 6);
+  const card = item => <article key={item.designElementId} className={item.favorite ? 'favorite' : ''}>
+    <span className="element-visual"><VisualAsset assetKey={item.assetKey || resolveDesignVisualKey(item)} viewStyle={viewStyle} title={`${item.name}, ${DESIGN_VIEW_STYLES.find(([value]) => value === viewStyle)?.[1] || 'visual'}`} /></span>
+    <div><small>{item.category}</small><strong>{item.name}</strong>{item.botanicalName && <em>{item.botanicalName}</em>}</div>
+    <div className="element-card-actions"><button type="button" className="element-favorite" onClick={() => onToggleFavorite(item)} aria-label={`${item.favorite ? 'Remove' : 'Add'} ${item.name} ${item.favorite ? 'from' : 'to'} favorites`} aria-pressed={Boolean(item.favorite)}>{item.favorite ? '★' : '☆'}</button><button type="button" onClick={() => onPlace({ ...item, selectedViewStyle: viewStyle })}>Place</button></div>
+  </article>;
   return <section className="design-element-library glass" role="dialog" aria-modal="false" aria-label="Local design element library">
-    <header><div><span>Local design element library</span><h3>Plants, structures, and decor</h3><p>Search local reusable elements. No AI generation or paid service is used.</p></div><button type="button" onClick={onClose} aria-label="Close element library">×</button></header>
-    <div className="element-library-controls"><input autoFocus type="search" placeholder="Search plants, furniture, structures…" value={query} onChange={event => setQuery(event.target.value)} /><select value={category} onChange={event => setCategory(event.target.value)}>{categories.map(item => <option key={item}>{item}</option>)}</select></div>
-    <div className="element-library-grid">{filtered.map(item => <article key={item.designElementId}><span className="element-symbol"><SymbolMark symbol={item.symbol} /></span><div><small>{item.category}</small><strong>{item.name}</strong>{item.botanicalName && <em>{item.botanicalName}</em>}</div><button type="button" onClick={() => onPlace(item)}>Place</button></article>)}{!filtered.length && <div className="management-empty">No local elements match this search.</div>}</div>
+    <header><div><span>Local visual plant and tree library</span><h3>Plants, structures, and hardscape</h3><p>Transparent visuals are bundled with this device. No AI generation or paid service is used.</p></div><button type="button" onClick={onClose} aria-label="Close element library">×</button></header>
+    <div className="element-view-styles" role="group" aria-label="Placement view style">{DESIGN_VIEW_STYLES.map(([value, label]) => <button key={value} type="button" className={viewStyle === value ? 'active' : ''} aria-pressed={viewStyle === value} onClick={() => setViewStyle(value)}>{label}</button>)}</div>
+    <div className="element-library-controls"><input autoFocus type="search" placeholder="Search apple, hydrangea, planter…" value={query} onChange={event => setQuery(event.target.value)} /><select aria-label="Element category" value={category} onChange={event => setCategory(event.target.value)}>{categories.map(item => <option key={item}>{item}</option>)}</select></div>
+    <div className="element-category-filters" role="group" aria-label="Element category filters">{categories.map(item => <button key={item} type="button" className={category === item ? 'active' : ''} aria-pressed={category === item} onClick={() => setCategory(item)}>{item}</button>)}</div>
+    <div className="element-library-results">
+      {!search && category === 'All' && recent.length > 0 && <section className="element-recent"><h4>Recently used</h4><div className="element-library-grid">{recent.map(card)}</div></section>}
+      <section><h4>{category === 'All' ? 'All elements' : category}</h4><div className="element-library-grid">{filtered.map(card)}{!filtered.length && <div className="management-empty">No local elements match this search.</div>}</div></section>
+    </div>
   </section>;
 }
 
@@ -1001,7 +1008,7 @@ function LegendsAndCosts({ data, setData, project, concept, objects }) {
     <div className="legend-cost-grid">
       <section><h4>Plant legend</h4>{[...byPlant.values()].map(item => {
         const plan = data.projectPlants.find(record => record.projectPlantId === item.relatedProjectPlantId);
-        return <article key={item.objectId}><span className="legend-symbol"><SymbolMark symbol={item.style?.symbol} /></span><div><strong>{item.label}</strong><em>{plan?.scientificName || item.style?.scientificName || 'Scientific name not entered'}</em><small>{item.style?.installationArea || plan?.installationLocation || 'Area open'} · quantity {item.count} · {plan?.status || 'Design-only'}</small></div><span>{item.clientVisible ? 'Client' : 'Internal'}</span></article>;
+        return <article key={item.objectId}><span className="legend-symbol"><VisualAsset assetKey={item.style?.assetKey || resolveDesignVisualKey(item)} viewStyle={item.style?.viewStyle || 'front'} /></span><div><strong>{item.label}</strong><em>{plan?.scientificName || item.style?.scientificName || 'Scientific name not entered'}</em><small>{item.style?.installationArea || plan?.installationLocation || 'Area open'} · quantity {item.count} · {plan?.status || 'Design-only'}</small></div><span>{item.clientVisible ? 'Client' : 'Internal'}</span></article>;
       })}{!plants.length && <div className="management-empty">No placed plants.</div>}</section>
       <section><h4>Material legend</h4>{materials.map(item => <article key={item.objectId}><span className={`material-swatch ${item.style?.pattern || ''}`} /><div><strong>{item.label}</strong><small>{item.style?.finish || item.style?.pattern || 'Soft concept wash'} · quantity {item.style?.quantity || 1}</small></div><span>{item.clientVisible ? 'Client' : 'Internal'}</span></article>)}{!materials.length && <div className="management-empty">No placed materials.</div>}</section>
       <section className="client-cost-summary"><h4>Client-facing cost summary</h4>{[['Plants', costs.plants], ['Materials', costs.materials], ['Installation', costs.installation], ['Delivery', costs.delivery], ['Design services', costs.designServices], ['Optional add-ons', costs.addOns]].map(([label, value]) => <div key={label}><span>{label}</span><strong>{money(value)}</strong></div>)}<div className="total"><span>Total client-facing investment</span><strong>{money(costs.total)}</strong></div><small>Connected records only. Design-only placeholders with no client price remain $0.</small></section>
@@ -1183,7 +1190,7 @@ export function InteractiveDesignStudio({ data, setData, project, concept, dupli
   const [fullscreen, setFullscreen] = useState(false);
   const [showLayers, setShowLayers] = useState(() => typeof window === 'undefined' || !window.matchMedia('(max-width: 1100px)').matches);
   const [showInspector, setShowInspector] = useState(() => typeof window === 'undefined' || !window.matchMedia('(max-width: 1100px)').matches);
-  const [quick, setQuick] = useState({ label: 'Garden label', measurementLabel: 'Bed length', plantSource: '', plantLabel: '', symbol: 'canopy', materialId: '', materialType: 'Mulch', overlayGroup: 'Sun and Shade', overlayLabel: 'Full Sun', featureLabel: 'House', coverFill: 'Dark brown mulch', coverOpacity: .72, bedType: BED_TYPES[0], borderStyle: BORDER_STYLES[0], borderThickness: 8, pathType: PATH_TYPES[1], pathWidth: 42, brushSize: 42, brushSoftness: .35, brushOpacity: 1 });
+  const [quick, setQuick] = useState({ label: 'Garden label', measurementLabel: 'Bed length', plantSource: '', plantLabel: '', assetKey: 'mixed-perennial', materialId: '', materialType: 'Mulch', overlayGroup: 'Sun and Shade', overlayLabel: 'Full Sun', featureLabel: 'House', coverFill: 'Dark brown mulch', coverOpacity: .72, bedType: BED_TYPES[0], borderStyle: BORDER_STYLES[0], borderThickness: 8, pathType: PATH_TYPES[1], pathWidth: 42, brushSize: 42, brushSoftness: .35, brushOpacity: 1 });
   const sceneRef = useRef(null);
   const interactionRef = useRef(null);
   const baseRevisionRef = useRef(number(draft.settings?.revision));
@@ -1416,8 +1423,11 @@ export function InteractiveDesignStudio({ data, setData, project, concept, dupli
       const source = selectedSourcePlant();
       const item = source.item || {};
       layerName = 'Plants';
-      label = quick.plantLabel || item.plantName || item.commonName || item.plant || 'Plant placeholder';
-      width = 78; height = 78; sourceKind = source.kind;
+      const namedPlant = quick.plantLabel || item.plantName || item.commonName || item.plant || '';
+      label = namedPlant || 'Mixed perennial grouping';
+      const assetKey = namedPlant ? resolveDesignVisualKey({ label: namedPlant, objectType: 'plant' }) : quick.assetKey;
+      const visual = getDesignVisualElement(assetKey);
+      width = visual.defaultWidth; height = visual.defaultHeight; sourceKind = source.kind;
       links = {
         relatedProjectPlantId: source.kind === 'projectPlant' ? item.projectPlantId : '',
         relatedSourcingRecordId: source.kind === 'sourcing' ? item.sourcingRecordId : item.sourcingRecordId || '',
@@ -1426,7 +1436,9 @@ export function InteractiveDesignStudio({ data, setData, project, concept, dupli
         stroke: DESIGN_COLORS.deepGreen,
         fill: DESIGN_COLORS.olive,
         fillOpacity: .34,
-        symbol: quick.symbol,
+        assetKey,
+        viewStyle: 'front',
+        shadow: 2,
         quantity: 1,
         installationArea: item.installationLocation || '',
         matureSpreadFeet: number(String(item.matureSize || '').match(/[\d.]+/)?.[0]),
@@ -1479,21 +1491,27 @@ export function InteractiveDesignStudio({ data, setData, project, concept, dupli
 
   const placeElement = element => {
     const isPlant = element.elementKind === 'plant';
-    const layerName = isPlant ? 'Plants' : element.category === 'Lighting' ? 'Lighting' : ['Benches', 'Tables', 'Chairs', 'Decorative pots', 'Fire features', 'Garden art'].includes(element.category) ? 'Furniture and Decor' : 'Structures';
+    const layerName = isPlant ? 'Plants' : element.category === 'Lighting' ? 'Lighting' : element.category === 'Hardscape' ? 'Paths and Pavers' : element.category === 'Containers' ? 'Furniture and Decor' : 'Structures';
     const layer = layerForName(draftRef.current.layers, layerName) || currentLayer;
-    const width = isPlant ? 92 : 130;
-    const height = isPlant ? 92 : 105;
+    const width = number(element.defaultWidth) || (isPlant ? 112 : 130);
+    const height = number(element.defaultHeight) || (isPlant ? 112 : 105);
     const object = createDesignObject({
       projectId: project.projectId, clientId, conceptId, layerId: layer?.layerId || '', libraryElementId: element.designElementId,
       objectType: isPlant ? 'plant' : 'landscape', x: DESIGN_CANVAS_WIDTH / 2 - width / 2, y: DESIGN_CANVAS_HEIGHT / 2 - height / 2,
       width, height, zIndex: Math.max(...draftRef.current.objects.map(item => number(item.zIndex)), 0) + 1, label: element.name,
       sourceKind: 'local-library', clientVisible: true,
-      style: { stroke: DESIGN_COLORS.deepGreen, fill: isPlant ? DESIGN_COLORS.olive : DESIGN_COLORS.cream, fillOpacity: isPlant ? .42 : .78, symbol: element.symbol, category: element.category, botanicalName: element.botanicalName, scientificName: element.botanicalName, matureSpreadFeet: element.matureWidth || 0, matureHeight: element.matureHeight || 0, suggestedSpacing: element.suggestedSpacing || 0, sunRequirement: element.sunRequirement || '', waterRequirement: element.waterRequirement || '', usdaZone: element.usdaZone || '', edible: Boolean(element.edible), pollinatorValue: element.pollinatorValue || '', unitCost: element.unitCost || '', supplier: element.supplier || '', installationNotes: element.installationNotes || '', quantity: 1, showLabel: true },
+      style: { stroke: DESIGN_COLORS.deepGreen, fill: isPlant ? DESIGN_COLORS.olive : DESIGN_COLORS.cream, fillOpacity: 0, assetKey: element.assetKey || resolveDesignVisualKey(element), viewStyle: element.selectedViewStyle || element.defaultViewStyle || 'front', shadow: 2, category: element.category, botanicalName: element.botanicalName, scientificName: element.botanicalName, matureSpreadFeet: element.matureWidth || 0, matureHeight: element.matureHeight || 0, suggestedSpacing: element.suggestedSpacing || 0, sunRequirement: element.sunRequirement || '', waterRequirement: element.waterRequirement || '', usdaZone: element.usdaZone || '', edible: Boolean(element.edible), pollinatorValue: element.pollinatorValue || '', unitCost: element.unitCost || '', supplier: element.supplier || '', installationNotes: element.installationNotes || '', quantity: 1, showLabel: true },
     });
     addObject(object, 'Local design element placed');
+    setData(current => ({ ...current, designElementLibrary: current.designElementLibrary.map(item => (item.designElementId || item.id) === element.designElementId ? { ...item, lastUsedAt: now(), useCount: number(item.useCount) + 1 } : item) }));
     if (isPlant) onGuideAction?.('plant-placed');
     setLibraryOpen(false);
   };
+
+  const toggleElementFavorite = element => setData(current => ({
+    ...current,
+    designElementLibrary: current.designElementLibrary.map(item => (item.designElementId || item.id) === element.designElementId ? { ...item, favorite: !item.favorite } : item),
+  }));
 
   const onCanvasPointerDown = event => {
     if (event.button !== undefined && event.button !== 0) return;
@@ -1786,7 +1804,7 @@ export function InteractiveDesignStudio({ data, setData, project, concept, dupli
     <WorkspaceToolbar tool={tool} setTool={setTool} undo={undo} redo={redo} canUndo={history.length > 0} canRedo={future.length > 0} zoom={draft.settings.viewportZoom} setZoom={value => updateSettings({ viewportZoom: value }, 'Canvas zoomed')} consultation={consultation} />
     <p className="selected-tool-guidance" role="status"><strong>{TOOLS.find(([id]) => id === tool)?.[1] || 'Select'} selected.</strong> {TOOL_HELP[tool] || 'Choose a tool, then use the canvas.'}<span> Apple Pencil draws without page scrolling. Choose Pan before moving the canvas.</span></p>
     <QuickAddControls tool={tool} draft={draft} data={data} project={project} quick={quick} setQuick={setQuick} />
-    {libraryOpen && <DesignElementLibrary elements={data.designElementLibrary} onPlace={placeElement} onClose={() => setLibraryOpen(false)} />}
+    {libraryOpen && <DesignElementLibrary elements={data.designElementLibrary} onPlace={placeElement} onToggleFavorite={toggleElementFavorite} onClose={() => setLibraryOpen(false)} />}
     <BackgroundControls settings={draft.settings} photos={photos} updateSettings={updateSettings} onGuideAction={onGuideAction} />
     <div className="mobile-panel-toggles"><button type="button" onClick={() => setShowLayers(value => !value)}>{showLayers ? 'Close layers' : 'Open layers'}</button><button type="button" onClick={() => setShowInspector(value => !value)}>{showInspector ? 'Close object controls' : 'Open object controls'}</button><button type="button" onClick={() => setLibraryOpen(true)}>Element library</button></div>
     <div className="interactive-studio-grid">

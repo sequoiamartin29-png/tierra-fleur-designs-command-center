@@ -10,6 +10,7 @@ import {
   createDesignObject,
   createDesignVersion,
   designCostSummary,
+  matureSpreadRadius,
   migrateDesignStudioData,
 } from './designEngine.js';
 
@@ -51,8 +52,58 @@ test('manual editor records expose stable IDs and a complete local element libra
   assert.ok(createDesignArea().designAreaId);
   assert.ok(createDesignMask().designMaskId);
   assert.ok(createDesignMaterialDraft().designMaterialId);
-  assert.ok(migrated.designElementLibrary.some(item => item.category === 'Fruit trees'));
-  assert.ok(migrated.designElementLibrary.some(item => item.category === 'Garden art'));
+  assert.ok(migrated.designElementLibrary.some(item => item.category === 'Fruit Trees' && item.name === 'Apple tree'));
+  assert.ok(migrated.designElementLibrary.some(item => item.category === 'Hardscape' && item.name === 'Paver group'));
+  assert.ok(migrated.designElementLibrary.every(item => item.imageAsset.startsWith('local-svg:')));
+  assert.ok(migrated.designElementLibrary.every(item => item.viewStyles.includes('front') && item.viewStyles.includes('plan') && item.viewStyles.includes('symbol')));
+});
+
+test('legacy plant placeholders gain visuals without changing saved object records', () => {
+  const savedObject = createDesignObject({
+    objectId: 'design-object-existing-apple',
+    designElementId: 'stable-placement-id',
+    libraryElementId: 'design-element-local-01',
+    objectType: 'plant',
+    label: 'Apple tree',
+    x: 271,
+    y: 188,
+    width: 96,
+    height: 124,
+    rotation: 27,
+    relatedProjectPlantId: 'project-plant-stable',
+    notes: 'Keep this note',
+    style: { symbol: 'fruit-tree', matureSpreadFeet: 16, showMatureSpread: true },
+  });
+  const migrated = migrateDesignStudioData({
+    designObjects: [savedObject],
+    designElementLibrary: [{ id: 'design-element-local-01', name: 'Apple tree', category: 'Fruit trees', imageAsset: 'local-symbol:fruit-tree', favorite: true, builtIn: true }],
+  }, { projects: [], clients: [], designConcepts: [] });
+  const object = migrated.designObjects[0];
+  const apple = migrated.designElementLibrary.find(item => item.designElementId === 'design-element-local-01');
+  assert.equal(object.objectId, 'design-object-existing-apple');
+  assert.equal(object.designElementId, 'stable-placement-id');
+  assert.equal(object.x, 271);
+  assert.equal(object.y, 188);
+  assert.equal(object.rotation, 27);
+  assert.equal(object.relatedProjectPlantId, 'project-plant-stable');
+  assert.equal(object.notes, 'Keep this note');
+  assert.equal(object.style.assetKey, 'apple-tree');
+  assert.equal(object.style.viewStyle, 'front');
+  assert.equal(object.style.matureSpreadFeet, 16);
+  assert.equal(object.style.showMatureSpread, true);
+  assert.equal(apple.designElementId, 'design-element-local-01');
+  assert.equal(apple.favorite, true);
+  assert.equal(apple.imageAsset, 'local-svg:design-elements#apple-tree');
+});
+
+test('mature-spread circles keep their calibrated design radius', () => {
+  const object = createDesignObject({ objectType: 'plant', style: { matureSpreadFeet: 16, showMatureSpread: true } });
+  const settings = createCanvasSettings();
+  settings.showAllMatureSpread = false;
+  settings.scaleCalibration = { ...settings.scaleCalibration, calibrated: true, pixelsPerFoot: 10 };
+  assert.equal(matureSpreadRadius(object, settings), 80);
+  object.style.showMatureSpread = false;
+  assert.equal(matureSpreadRadius(object, settings), 0);
 });
 
 test('cover, bed, border, and path records participate in material comparisons and client totals', () => {

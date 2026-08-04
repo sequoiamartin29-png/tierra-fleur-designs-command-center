@@ -1,4 +1,10 @@
-export const DESIGN_STUDIO_SCHEMA_VERSION = 7;
+import {
+  BUILT_IN_DESIGN_ELEMENTS,
+  normalizeDesignElement,
+  resolveDesignVisualKey,
+} from './designVisualLibrary.js';
+
+export const DESIGN_STUDIO_SCHEMA_VERSION = 8;
 export const DESIGN_CANVAS_WIDTH = 1200;
 export const DESIGN_CANVAS_HEIGHT = 760;
 export const DESIGN_HISTORY_LIMIT = 30;
@@ -74,31 +80,6 @@ export const COVER_FILL_OPTIONS = [
 export const BED_TYPES = ['Curved garden bed', 'Straight garden bed', 'Foundation bed', 'Island bed', 'Tree ring', 'Orchard row', 'Raised bed', 'Container grouping'];
 export const BORDER_STYLES = ['Black metal edging', 'Brown metal edging', 'Plastic edging', 'Brick', 'Stone', 'Paver', 'Timber', 'Natural trench edge', 'Decorative border', 'Custom border'];
 export const PATH_TYPES = ['Straight path', 'Curved path', 'Stepping stones', 'Paver walkway', 'Gravel path', 'Brick path', 'Flagstone path', 'Concrete pad', 'Small patio', 'Driveway-edge treatment'];
-
-const ELEMENT_BLUEPRINTS = [
-  ['Fruit trees', 'Apple tree', 'Malus domestica', 'fruit-tree', 16, 18, 'Full Sun', 'Moderate', '4–8', true, 'High'],
-  ['Ornamental trees', 'Flowering dogwood', 'Cornus florida', 'tree', 20, 20, 'Part Sun', 'Moderate', '5–9', false, 'High'],
-  ['Evergreen trees', 'Eastern red cedar', 'Juniperus virginiana', 'tree', 12, 35, 'Full Sun', 'Low', '2–9', false, 'Medium'],
-  ['Shrubs', 'Boxwood', 'Buxus', 'shrub', 4, 4, 'Part Sun', 'Moderate', '5–9', false, 'Low'],
-  ['Flowering shrubs', 'Hydrangea', 'Hydrangea macrophylla', 'shrub', 5, 5, 'Part Shade', 'Moderate', '5–9', false, 'Medium'],
-  ['Perennials', 'Coneflower', 'Echinacea purpurea', 'perennial-cluster', 2, 3, 'Full Sun', 'Low', '3–9', false, 'High'],
-  ['Annuals', 'Zinnia', 'Zinnia elegans', 'perennial-cluster', 1, 3, 'Full Sun', 'Moderate', 'Annual', false, 'High'],
-  ['Herbs', 'Rosemary', 'Salvia rosmarinus', 'herb', 3, 4, 'Full Sun', 'Low', '7–10', true, 'High'],
-  ['Vegetables', 'Tomato', 'Solanum lycopersicum', 'vegetable', 2, 5, 'Full Sun', 'Moderate', 'Annual', true, 'Medium'],
-  ['Grasses', 'Switchgrass', 'Panicum virgatum', 'perennial-cluster', 3, 5, 'Full Sun', 'Low', '3–9', false, 'Medium'],
-  ['Groundcovers', 'Creeping thyme', 'Thymus serpyllum', 'groundcover', 1.5, .5, 'Full Sun', 'Low', '4–9', true, 'High'],
-  ['Vines', 'Clematis', 'Clematis', 'vine', 3, 10, 'Part Sun', 'Moderate', '4–9', false, 'High'],
-  ['Container plants', 'Mixed seasonal planter', '', 'container', 2, 3, 'Part Sun', 'Moderate', 'Seasonal', false, 'Medium'],
-  ['Tropical plants', 'Canna lily', 'Canna', 'perennial-cluster', 3, 6, 'Full Sun', 'High', '7–11', false, 'High'],
-  ['Pollinator plants', 'Milkweed', 'Asclepias', 'perennial-cluster', 2, 4, 'Full Sun', 'Low', '3–9', false, 'High'],
-  ['Planters', 'Statement planter', '', 'container'], ['Raised beds', 'Cedar raised bed', '', 'raised-bed'],
-  ['Trellises', 'Garden trellis', '', 'custom'], ['Arbors', 'Garden arbor', '', 'custom'], ['Pergolas', 'Pergola', '', 'custom'],
-  ['Benches', 'Garden bench', '', 'custom'], ['Tables', 'Outdoor table', '', 'custom'], ['Chairs', 'Outdoor chair', '', 'custom'],
-  ['Fountains', 'Garden fountain', '', 'custom'], ['Birdbaths', 'Birdbath', '', 'custom'], ['Lighting', 'Path light', '', 'custom'],
-  ['Decorative pots', 'Decorative pot', '', 'container'], ['Fire features', 'Fire feature', '', 'custom'],
-  ['Outdoor kitchens', 'Outdoor kitchen', '', 'custom'], ['BBQ areas', 'BBQ area', '', 'custom'], ['Pools', 'Pool', '', 'custom'],
-  ['Fencing', 'Fence panel', '', 'custom'], ['Privacy screens', 'Privacy screen', '', 'custom'], ['Garden art', 'Garden sculpture', '', 'custom'],
-];
 
 const TEMPLATE_BLUEPRINTS = [
   ['Front Foundation Bed', 'A welcoming layered foundation composition', [
@@ -246,34 +227,7 @@ function seedTemplates() {
 }
 
 function seedDesignElements() {
-  return ELEMENT_BLUEPRINTS.map(([category, name, botanicalName = '', symbol = 'custom', matureWidth = 0, matureHeight = 0, sunRequirement = '', waterRequirement = '', usdaZone = '', edible = false, pollinatorValue = ''], index) => {
-    const designElementId = `design-element-local-${String(index + 1).padStart(2, '0')}`;
-    const isPlant = index < 15;
-    return {
-      id: designElementId,
-      designElementId,
-      category,
-      name,
-      commonName: isPlant ? name : '',
-      botanicalName,
-      imageAsset: `local-symbol:${symbol}`,
-      elementKind: isPlant ? 'plant' : 'landscape',
-      symbol,
-      matureWidth,
-      matureHeight,
-      suggestedSpacing: matureWidth,
-      sunRequirement,
-      waterRequirement,
-      usdaZone,
-      edible,
-      pollinatorValue,
-      unitCost: '',
-      supplier: '',
-      installationNotes: '',
-      builtIn: true,
-      archived: false,
-    };
-  });
+  return BUILT_IN_DESIGN_ELEMENTS.map(item => ({ ...item }));
 }
 
 export function createDesignStudioStarter() {
@@ -368,6 +322,14 @@ export function createDesignMaterialDraft(input = {}) {
 
 export function createDesignObject(input = {}) {
   const objectId = input.objectId || input.id || uid('design-object');
+  const usesDesignVisual = ['plant', 'landscape'].includes(input.objectType) || Boolean(input.style?.assetKey) || String(input.style?.imageAsset || '').startsWith('local-symbol:');
+  const assetKey = usesDesignVisual ? resolveDesignVisualKey({
+    ...input,
+    libraryElementId: input.libraryElementId,
+    assetKey: input.style?.assetKey,
+    symbol: input.style?.symbol,
+  }) : '';
+  const viewStyle = ['front', 'plan', 'symbol'].includes(input.style?.viewStyle) ? input.style.viewStyle : 'front';
   return {
     id: objectId,
     objectId,
@@ -435,6 +397,8 @@ export function createDesignObject(input = {}) {
       pathWidth: Math.max(1, finite(input.style?.pathWidth, 36)),
       borderThickness: Math.max(1, finite(input.style?.borderThickness, 8)),
       ...input.style,
+      assetKey,
+      viewStyle,
     },
     points: records(input.points).map(point => ({ x: finite(point.x), y: finite(point.y) })),
     label: input.label || '',
@@ -604,10 +568,10 @@ export function migrateDesignStudioData(saved = {}, related = {}) {
     ...templates.map(item => ({ ...item, templateId: item.templateId || item.id, archived: Boolean(item.archived) })),
     ...seedTemplates().filter(item => !templateById.has(item.templateId)),
   ];
-  const savedElements = records(saved.designElementLibrary);
+  const savedElements = records(saved.designElementLibrary).map(normalizeDesignElement);
   const elementIds = new Set(savedElements.map(item => item.designElementId || item.id));
   const designElementLibrary = [
-    ...savedElements.map(item => ({ ...item, designElementId: item.designElementId || item.id, archived: Boolean(item.archived) })),
+    ...savedElements,
     ...seedDesignElements().filter(item => !elementIds.has(item.designElementId)),
   ];
 
@@ -806,6 +770,13 @@ export function measurementLabel(object, settings) {
   const wholeFeet = Math.floor(feet);
   const inches = Math.round((feet - wholeFeet) * 12);
   return `${object.label || 'Measurement'} ≈ ${wholeFeet}′ ${inches}″`;
+}
+
+export function matureSpreadRadius(object, settings) {
+  const spreadFeet = finite(object?.style?.customSpreadFeet || object?.style?.matureSpreadFeet, 0);
+  const pixelsPerFoot = finite(settings?.scaleCalibration?.pixelsPerFoot, 0);
+  const show = spreadFeet > 0 && (settings?.showAllMatureSpread || object?.style?.showMatureSpread);
+  return show && pixelsPerFoot > 0 ? spreadFeet * pixelsPerFoot / 2 : 0;
 }
 
 export function spacingNotice(object, objects, settings) {
