@@ -89,6 +89,8 @@ export function createBlankLead(values = {}) {
     propertyType: 'Residential', preferredContactMethod: 'No preference', dateReceived: localDate(),
     lastContactDate: '', nextFollowUpDate: '', consultationDate: '', currentStage: 'New Lead',
     priorityLevel: 'Medium', notes: '', tags: [], photoIds: [], lostReason: '', clientId: '', projectId: '',
+    availabilityMustBeConfirmed: false, requestedPlant: '', preferredVariety: '', acceptableSubstitutes: '',
+    clientApprovalRequired: true, requestedPlantQuantity: 1, requestedPlantNeededBy: '', requestedPlantUse: 'Outdoor',
     ...values,
   };
 }

@@ -43,31 +43,35 @@ import {
   migrateEstimateDocuments,
   migrateGrowthData,
   migrateServices,
+  normalizeEstimateLine,
   repairLeadFollowUpCalendarLinks,
 } from './growthEngine.js';
 import { GrowthDashboardCards, GrowthDistrict } from './growthDistrict.jsx';
 import { EstimateWorkspace, ServiceLibrary } from './estimateWorkspace.jsx';
 import {
+  PROJECT_PHOTO_ACCEPT,
   buildDataBackup,
   importDataBackup,
+  prepareProjectPhoto,
   prepareProjectPhotosForRuntime,
+  releasePreparedProjectPhoto,
+  removeProjectPhotoAttachments,
   serializeDataForStorage,
+  storePreparedProjectPhoto,
 } from './imageStorage.js';
+import {
+  PLANT_AVAILABILITY_STATUSES,
+  PLANT_SOURCING_VERSION,
+  SPECIALTY_NURSERY_SEEDS,
+  SPECIALTY_PLANT_CATEGORIES,
+  availabilityForPlant,
+  findPlantSupplierMatches,
+  normalizePlantSearch,
+} from './plantSourcing.js';
 
 const STORAGE_KEY = 'tierraFleurCommandCenterV1';
 
-const PLANT_CATEGORIES = [
-  'Citrus',
-  'Fruit Trees',
-  'Berries',
-  'Herbs and Tea Plants',
-  'Roses',
-  'Native Plants',
-  'Annuals and Perennials',
-  'Houseplants',
-  'Seeds',
-  'Landscape Supplies',
-];
+const PLANT_CATEGORIES = SPECIALTY_PLANT_CATEGORIES;
 
 const categoryTitle = category => category === 'Citrus' ? 'Citrus Trees' : category;
 
@@ -76,14 +80,34 @@ const nurseryDefaults = {
   website: '',
   phone: '',
   email: '',
+  city: '',
+  state: '',
   location: '',
   sourceType: 'Online',
   categories: [],
   specialties: '',
   plants: '',
+  plantKeywords: '',
+  botanicalNames: '',
+  varieties: '',
+  greenhouseSpecialties: '',
   shipsToDelaware: 'Ask nursery',
+  localPickupAvailability: 'Ask nursery',
   wholesaleAvailability: 'Ask nursery',
+  retailAvailability: 'Available',
+  shippingNotes: '',
+  minimumOrder: '',
+  deliveryInformation: '',
+  lastVerifiedDate: '',
+  verificationSource: '',
+  directContact: '',
+  wholesaleAccountNotes: '',
+  userNotes: '',
+  poorExperience: '',
+  plantAvailability: [],
   notes: '',
+  preferred: false,
+  trusted: false,
   favorite: false,
   approved: false,
   archived: false,
@@ -190,14 +214,30 @@ const curatedNurseries = [
     name: "Logee's Plants",
     website: 'https://www.logees.com/',
     phone: '860-774-8038',
+    email: '',
+    city: 'Danielson',
+    state: 'Connecticut',
     location: 'Danielson, Connecticut',
     sourceType: 'Online',
-    categories: ['Houseplants', 'Citrus', 'Herbs and Tea Plants', 'Fruit Trees'],
+    categories: ['Greenhouse Plants', 'Tropical Fruit', 'Houseplants', 'Citrus', 'Herbs and Tea Plants', 'Fruit Trees', 'Rare Edibles', 'Specialty Vines', 'Specialty Ornamentals'],
     specialties: 'Rare tropical, fruiting and greenhouse-grown plants',
     plants: 'Houseplants, begonias, citrus, figs, tropical fruit, jasmine, culinary plants and collector specimens',
+    plantKeywords: 'rare tropical plants, tropical fruit, fruiting vines, citrus, fig, jasmine, culinary plants, greenhouse edibles',
+    botanicalNames: 'Citrus, Ficus carica, Jasminum',
+    varieties: '',
+    greenhouseSpecialties: 'Collector tropicals, fruiting plants, begonias, flowering vines, and conservatory plants',
     shipsToDelaware: 'Yes',
+    localPickupAvailability: 'Retail greenhouse available; confirm hours',
     wholesaleAvailability: 'Ask nursery',
-    notes: 'Weather-aware year-round shipping from Connecticut. Especially useful for conservatory and indoor edible plants.',
+    retailAvailability: 'Available',
+    shippingNotes: 'Weather-aware shipping from Connecticut; plant timing and weather holds vary, so confirm the item-specific ship window.',
+    minimumOrder: 'No saved minimum; verify with nursery',
+    deliveryInformation: 'Carrier delivery and retail greenhouse pickup',
+    lastVerifiedDate: '2026-08-05',
+    verificationSource: 'https://www.logees.com/policies/contact-information',
+    catalogTerms: 'rare tropical plant citrus fig jasmine culinary plant greenhouse edible flowering vine houseplant',
+    broadCatalog: true,
+    notes: 'Especially useful for conservatory, greenhouse, indoor edible, and collector-plant requests.',
   },
   {
     id: 'nursery-johnnys-seeds',
@@ -269,12 +309,27 @@ const curatedNurseries = [
     wholesaleAvailability: 'Ask nursery',
     notes: 'Broad New Castle County source for planting projects, containers and finishing materials.',
   },
+  ...SPECIALTY_NURSERY_SEEDS,
 ].map(nursery => ({ ...nurseryDefaults, ...nursery, nurseryId: nursery.id }));
 
 function inferNurseryCategories(item) {
   const text = `${item.name || ''} ${item.specialties || ''} ${item.products || ''} ${item.plants || ''}`.toLowerCase();
   const matches = [
+    [/passion\s?fruit|passionflower|passiflora|maypop/, 'Passion Fruit and Passiflora'],
+    [/tropical fruit|loquat|guava|mango|banana|dragon fruit/, 'Tropical Fruit'],
     [/citrus|lemon|lime|satsuma|kumquat|mandarin/, 'Citrus'],
+    [/\bfig\b|ficus carica/, 'Fig'],
+    [/pomegranate|punica/, 'Pomegranate'],
+    [/mulberry|morus/, 'Mulberry'],
+    [/persimmon|diospyros/, 'Persimmon'],
+    [/paw\s?paw|asimina/, 'Pawpaw'],
+    [/\bkiwi\b|actinidia/, 'Kiwi'],
+    [/\bgrape|vitis/, 'Grapes'],
+    [/camellia sinensis|tea plant/, 'Tea Plants'],
+    [/medicinal|ashwagandha|echinacea|calendula|comfrey/, 'Medicinal Plants'],
+    [/greenhouse|conservatory/, 'Greenhouse Plants'],
+    [/wetland|rain garden|aquatic|pond plant|water lily|sarracenia/, 'Aquatic and Rain-Garden Plants'],
+    [/pollinator|butterfly|bee plant/, 'Pollinator Plants'],
     [/fruit tree|orchard|apple|peach|pear|cherry|fig/, 'Fruit Trees'],
     [/berr|strawberr|raspberr|blueberr|blackberr|currant/, 'Berries'],
     [/herb|tea|medicinal|culinary/, 'Herbs and Tea Plants'],
@@ -289,7 +344,7 @@ function inferNurseryCategories(item) {
 }
 
 function normalizeNursery(item = {}) {
-  const legacyNotes = [item.personalNotes, item.shippingNotes, item.pricingNotes, item.qualityNotes].filter(Boolean).join('\n');
+  const legacyNotes = [item.personalNotes, item.pricingNotes, item.qualityNotes].filter(Boolean).join('\n');
   const categories = Array.isArray(item.categories) && item.categories.length ? item.categories.filter(category => PLANT_CATEGORIES.includes(category)) : inferNurseryCategories(item);
   return {
     ...nurseryDefaults,
@@ -298,7 +353,19 @@ function normalizeNursery(item = {}) {
     categories: categories.length ? categories : ['Annuals and Perennials'],
     plants: item.plants || item.products || '',
     notes: item.notes || legacyNotes,
+    city: item.city || '',
+    state: item.state || '',
+    localPickupAvailability: item.localPickupAvailability || (item.shipsToDelaware === 'Local pickup' ? 'Available' : 'Ask nursery'),
+    retailAvailability: item.retailAvailability || 'Available',
+    plantAvailability: Array.isArray(item.plantAvailability) ? item.plantAvailability.filter(entry => entry && typeof entry === 'object').map(entry => ({
+      plantQuery: entry.plantQuery || '',
+      status: PLANT_AVAILABILITY_STATUSES.includes(entry.status) ? entry.status : 'Unknown',
+      lastVerifiedDate: entry.lastVerifiedDate || '',
+      note: entry.note || '',
+    })) : [],
     favorite: Boolean(item.favorite),
+    preferred: item.preferred === undefined ? Boolean(item.favorite) : Boolean(item.preferred),
+    trusted: Boolean(item.trusted),
     approved: Boolean(item.approved),
     archived: Boolean(item.archived),
   };
@@ -310,7 +377,11 @@ function mergeNurserySeed(seed, saved) {
     if (Array.isArray(value)) return value.length > 0;
     return value !== '' && value !== null && value !== undefined;
   }));
-  return normalizeNursery({ ...seed, ...meaningfulSavedValues });
+  return normalizeNursery({
+    ...seed,
+    ...meaningfulSavedValues,
+    categories: [...new Set([...(seed.categories || []), ...(saved.categories || [])])],
+  });
 }
 
 const starter = {
@@ -337,7 +408,7 @@ const starter = {
     { id: crypto.randomUUID(), name: 'Container Garden Installation', price: 275, unit: 'installation' },
   ],
   nurseries: curatedNurseries,
-  plantSourcingVersion: 1,
+  plantSourcingVersion: PLANT_SOURCING_VERSION,
   ...createDistrictStarter(),
   ...createDesignStarter(),
   ...createDesignStudioStarter(),
@@ -353,13 +424,13 @@ const starter = {
 function normalizeData(saved = {}) {
   saved = saved && typeof saved === 'object' && !Array.isArray(saved) ? saved : {};
   const savedNurseries = Array.isArray(saved.nurseries) ? saved.nurseries : [];
-  const needsPlantSourcingMigration = Number(saved.plantSourcingVersion || 0) < 1;
-  const savedById = new Map(savedNurseries.map(nursery => [nursery.id, nursery]));
+  const needsPlantSourcingMigration = Number(saved.plantSourcingVersion || 0) < PLANT_SOURCING_VERSION;
+  const savedById = new Map(savedNurseries.map(nursery => [nursery.id || nursery.nurseryId, nursery]));
   const seededIds = new Set(curatedNurseries.map(nursery => nursery.id));
   const migratedNurseries = needsPlantSourcingMigration
     ? [
         ...curatedNurseries.map(nursery => mergeNurserySeed(nursery, savedById.get(nursery.id))),
-        ...savedNurseries.filter(nursery => !seededIds.has(nursery.id)).map(normalizeNursery),
+        ...savedNurseries.filter(nursery => !seededIds.has(nursery.id || nursery.nurseryId)).map(normalizeNursery),
       ]
     : savedNurseries.map(normalizeNursery);
   const districtData = migrateDistrictData(saved);
@@ -417,7 +488,7 @@ function normalizeData(saved = {}) {
     tasks,
     learning,
     nurseries: migratedNurseries,
-    plantSourcingVersion: 1,
+    plantSourcingVersion: PLANT_SOURCING_VERSION,
   });
 }
 
@@ -657,7 +728,7 @@ function App() {
         {view === 'estimates' && <EstimateWorkspace data={data} setData={setData} initialLeadId={focusedLeadId} initialDocumentId={focusedDocumentId} clearRequest={() => { setFocusedLeadId(''); setFocusedDocumentId(''); }} openProject={openProject} />}
         {view === 'tasks' && <Tasks items={data.tasks} setItems={v => update('tasks', v)} />}
         {view === 'services' && <ServiceLibrary data={data} setData={setData} />}
-        {view === 'plant-sourcing' && <PlantSourcingDirectory items={data.nurseries} setItems={v => update('nurseries', v)} />}
+        {view === 'plant-sourcing' && <PlantSourcingDirectory data={data} setData={setData} />}
         {view === 'learning' && <LearningWorkspace learning={data.learning || starter.learning} setLearning={v => update('learning', v)} />}
         {view === 'settings' && <Settings data={data} setData={setData} />}
       </main>
@@ -1137,7 +1208,29 @@ function NurseryDirectory({ items, setItems }) {
 
 const createBlankPlantSource = () => ({ ...nurseryDefaults, categories: [] });
 
-function PlantSourcingDirectory({ items, setItems }) {
+const createBlankSourcingHold = () => ({
+  requestedPlant: '',
+  preferredVariety: '',
+  acceptableSubstitutes: '',
+  clientApprovalRequired: true,
+  quantity: 1,
+  neededBy: '',
+  useEnvironment: 'Outdoor',
+  nurseryId: '',
+  leadId: '',
+  estimateId: '',
+  projectId: '',
+  confirmedSupplier: '',
+  confirmedPrice: '',
+  confirmationDate: '',
+  availabilityMustBeConfirmed: true,
+  availabilityStatus: 'Unknown',
+  verificationNote: '',
+});
+
+function PlantSourcingDirectory({ data, setData }) {
+  const items = data.nurseries;
+  const setItems = nurseries => setData(current => ({ ...current, nurseries }));
   const [form, setForm] = useState(createBlankPlantSource);
   const [editingId, setEditingId] = useState(null);
   const [formOpen, setFormOpen] = useState(false);
@@ -1147,6 +1240,11 @@ function PlantSourcingDirectory({ items, setItems }) {
   const [favoritesOnly, setFavoritesOnly] = useState(false);
   const [approvedOnly, setApprovedOnly] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
+  const [verification, setVerification] = useState(null);
+  const [holdForm, setHoldForm] = useState(createBlankSourcingHold);
+  const [holdOpen, setHoldOpen] = useState(false);
+  const [holdMessage, setHoldMessage] = useState('');
+  const [attachmentStatus, setAttachmentStatus] = useState(null);
 
   const normalizedItems = useMemo(() => items.map(normalizeNursery), [items]);
   const activeItems = normalizedItems.filter(item => !item.archived);
@@ -1154,35 +1252,24 @@ function PlantSourcingDirectory({ items, setItems }) {
   const approvedCount = activeItems.filter(item => item.approved).length;
 
   const filtered = useMemo(() => {
-    const query = search.trim().toLowerCase();
-    return normalizedItems
+    const candidates = normalizedItems
       .filter(item => showArchived ? item.archived : !item.archived)
       .filter(item => category === 'All' || item.categories.includes(category))
-      .filter(item => !favoritesOnly || item.favorite)
-      .filter(item => !approvedOnly || item.approved)
-      .filter(item => {
-        if (!query) return true;
-        const searchable = [
-          item.name,
-          item.location,
-          item.phone,
-          item.email,
-          item.sourceType,
-          item.specialties,
-          item.plants,
-          item.notes,
-          item.shipsToDelaware,
-          item.wholesaleAvailability,
-          ...item.categories,
-        ].join(' ').toLowerCase();
-        return searchable.includes(query);
-      })
+      .filter(item => !favoritesOnly || item.preferred)
+      .filter(item => !approvedOnly || item.approved);
+    return findPlantSupplierMatches(candidates, search)
+      .map(({ nursery, ...match }) => ({ ...nursery, _match: match }))
       .sort((a, b) =>
+        Number(b._match?.score || 0) - Number(a._match?.score || 0)
+        ||
         Number(Boolean(b.approved)) - Number(Boolean(a.approved))
-        || Number(Boolean(b.favorite)) - Number(Boolean(a.favorite))
+        || Number(Boolean(b.preferred)) - Number(Boolean(a.preferred))
         || a.name.localeCompare(b.name)
       );
   }, [normalizedItems, search, category, favoritesOnly, approvedOnly, showArchived]);
+
+  const availabilityFor = item => availabilityForPlant(item, search, item._match);
+  const hasConfirmedSupplier = Boolean(search.trim()) && filtered.some(item => availabilityFor(item).status === 'Confirmed available');
 
   const groups = useMemo(() => {
     if (category !== 'All') return [{ category, nurseries: filtered }];
@@ -1228,7 +1315,8 @@ function PlantSourcingDirectory({ items, setItems }) {
       setFormError('Add a nursery name and choose at least one plant specialty.');
       return;
     }
-    const record = normalizeNursery({ ...form, name: form.name.trim() });
+    const location = form.location.trim() || [form.city.trim(), form.state.trim()].filter(Boolean).join(', ');
+    const record = normalizeNursery({ ...form, name: form.name.trim(), location, favorite: form.preferred });
     if (editingId) {
       setItems(items.map(item => item.id === editingId ? { ...record, id: editingId } : item));
     } else {
@@ -1237,6 +1325,151 @@ function PlantSourcingDirectory({ items, setItems }) {
     resetForm();
   };
   const patchItem = (id, patch) => setItems(items.map(item => item.id === id ? { ...item, ...patch } : item));
+  const attachmentsFor = item => data.projectPhotos.filter(photo => photo.nurseryId === (item.nurseryId || item.id) && !photo.archived);
+  const uploadSupplierScreenshot = async (item, file) => {
+    if (!file) return;
+    const nurseryId = item.nurseryId || item.id;
+    setAttachmentStatus({ nurseryId, message: 'Preparing supplier screenshot…', error: false });
+    let prepared;
+    try {
+      prepared = await prepareProjectPhoto(file);
+      const photoId = `nursery-reference-${crypto.randomUUID()}`;
+      const stored = await storePreparedProjectPhoto(photoId, prepared);
+      const photo = {
+        id: photoId,
+        photoId,
+        nurseryId,
+        type: 'Supplier Reference',
+        label: file.name || 'Supplier screenshot',
+        notes: 'Nursery screenshot or document image',
+        fileName: prepared.name,
+        originalName: prepared.originalName,
+        width: prepared.width,
+        height: prepared.height,
+        createdAt: new Date().toISOString(),
+        archived: false,
+        ...stored,
+      };
+      setData(current => ({ ...current, projectPhotos: [photo, ...current.projectPhotos] }));
+      setAttachmentStatus({ nurseryId, message: 'Supplier screenshot saved to attachment storage.', error: false });
+    } catch (error) {
+      setAttachmentStatus({ nurseryId, message: error instanceof Error ? error.message : 'The supplier screenshot could not be saved.', error: true });
+    } finally {
+      if (prepared) releasePreparedProjectPhoto(prepared);
+    }
+  };
+  const removeSupplierScreenshot = async (photo, nurseryId) => {
+    if (!confirm('Remove this supplier screenshot from this device?')) return;
+    try {
+      await removeProjectPhotoAttachments(photo);
+      setData(current => ({ ...current, projectPhotos: current.projectPhotos.filter(item => item.photoId !== photo.photoId) }));
+      setAttachmentStatus({ nurseryId, message: 'Supplier screenshot removed.', error: false });
+    } catch (error) {
+      setAttachmentStatus({ nurseryId, message: error instanceof Error ? error.message : 'The supplier screenshot could not be removed.', error: true });
+    }
+  };
+  const updateAvailability = (nurseryId, status, note = '') => {
+    const plantQuery = search.trim();
+    if (!plantQuery) return;
+    const key = normalizePlantSearch(plantQuery);
+    setData(current => ({
+      ...current,
+      nurseries: current.nurseries.map(item => {
+        if ((item.nurseryId || item.id) !== nurseryId) return item;
+        const existing = Array.isArray(item.plantAvailability) ? item.plantAvailability : [];
+        const entry = { plantQuery, status, lastVerifiedDate: new Date().toISOString().slice(0, 10), note: note.trim() };
+        const found = existing.some(saved => normalizePlantSearch(saved.plantQuery) === key);
+        return { ...item, plantAvailability: found ? existing.map(saved => normalizePlantSearch(saved.plantQuery) === key ? entry : saved) : [entry, ...existing] };
+      }),
+    }));
+    setVerification(null);
+  };
+  const beginVerification = item => {
+    if (!search.trim()) return;
+    const current = availabilityFor(item);
+    setVerification({ nurseryId: item.nurseryId || item.id, nurseryName: item.name, status: current.status, note: current.note || '' });
+  };
+  const beginHold = (item = null, substitute = false) => {
+    const current = item ? availabilityFor(item) : { status: 'Unknown' };
+    setHoldForm({
+      ...createBlankSourcingHold(),
+      requestedPlant: search.trim(),
+      nurseryId: item?.nurseryId || item?.id || '',
+      confirmedSupplier: current.status === 'Confirmed available' ? item?.name || '' : '',
+      confirmationDate: current.status === 'Confirmed available' ? current.lastVerifiedDate || '' : '',
+      availabilityStatus: current.status,
+      verificationNote: current.note || '',
+      acceptableSubstitutes: substitute && item ? `Discuss suitable alternatives with ${item.name}` : '',
+    });
+    setHoldMessage('');
+    setHoldOpen(true);
+  };
+  const saveHold = event => {
+    event.preventDefault();
+    if (!holdForm.requestedPlant.trim()) { setHoldMessage('Add the requested plant before saving this sourcing hold.'); return; }
+    const sourcingRecordId = `source-record-${crypto.randomUUID()}`;
+    const linkedEstimate = data.estimates.find(item => (item.estimateId || item.id) === holdForm.estimateId);
+    const linkedProject = data.projects.find(item => item.projectId === (holdForm.projectId || linkedEstimate?.projectId));
+    const linkedLead = data.leads.find(item => item.leadId === (holdForm.leadId || linkedEstimate?.leadId || linkedProject?.leadId));
+    const projectId = holdForm.projectId || linkedEstimate?.projectId || linkedLead?.projectId || '';
+    const leadId = holdForm.leadId || linkedEstimate?.leadId || linkedProject?.leadId || '';
+    const confirmed = holdForm.availabilityStatus === 'Confirmed available' && Boolean(holdForm.confirmedSupplier.trim()) && Boolean(holdForm.confirmationDate);
+    const statusMap = { 'Confirmed available': 'Available', 'Out of stock': 'Unavailable', 'Special order': 'Requested', Ordered: 'Ordered', 'Picked up': 'Received', Delivered: 'Received' };
+    const record = {
+      ...holdForm,
+      id: sourcingRecordId,
+      sourcingRecordId,
+      plant: holdForm.requestedPlant.trim(),
+      requestedPlant: holdForm.requestedPlant.trim(),
+      variety: holdForm.preferredVariety.trim(),
+      substitutePlant: holdForm.acceptableSubstitutes.trim(),
+      estimateId: linkedEstimate?.estimateId || holdForm.estimateId,
+      projectId,
+      leadId,
+      clientId: linkedEstimate?.clientId || linkedProject?.clientId || linkedLead?.clientId || '',
+      availabilityConfirmed: confirmed,
+      status: statusMap[holdForm.availabilityStatus] || 'Requested',
+      pickupStatus: ['Picked up', 'Delivered'].includes(holdForm.availabilityStatus) ? holdForm.availabilityStatus : 'Not ordered',
+      lastVerifiedDate: holdForm.confirmationDate || '',
+      unitCost: holdForm.confirmedPrice,
+      wholesaleCost: holdForm.confirmedPrice,
+      estimatedCost: Number(holdForm.confirmedPrice || 0) * Number(holdForm.quantity || 0),
+      notes: holdForm.verificationNote,
+      createdAt: new Date().toISOString(),
+      archived: false,
+    };
+    setData(current => {
+      let next = { ...current, sourcingRecords: [record, ...current.sourcingRecords] };
+      if (record.estimateId) {
+        next = {
+          ...next,
+          estimates: next.estimates.map(estimate => {
+            if ((estimate.estimateId || estimate.id) !== record.estimateId) return estimate;
+            const line = normalizeEstimateLine({
+              id: `estimate-line-${crypto.randomUUID()}`,
+              category: 'Plants',
+              description: [record.requestedPlant, record.preferredVariety].filter(Boolean).join(' · '),
+              quantity: record.quantity || 1,
+              unit: 'plant',
+              cost: record.confirmedPrice || '',
+              customerPrice: record.confirmedPrice || '',
+              taxable: true,
+              notes: record.acceptableSubstitutes ? `Acceptable substitutes: ${record.acceptableSubstitutes}` : '',
+              sourcingRecordId,
+              availabilityMustBeConfirmed: true,
+              availabilityConfirmed: confirmed,
+            });
+            const lines = [...(estimate.lines || estimate.lineItems || []), line];
+            return { ...estimate, lines, lineItems: lines, availabilityMustBeConfirmed: !confirmed || estimate.availabilityMustBeConfirmed, updatedAt: new Date().toISOString() };
+          }),
+        };
+      }
+      return next;
+    });
+    setHoldOpen(false);
+    setHoldForm(createBlankSourcingHold());
+    setHoldMessage('Sourcing hold saved. Availability remains unpromised until a supplier confirmation is recorded.');
+  };
   const archive = item => {
     patchItem(item.id, { archived: !item.archived });
     if (editingId === item.id) resetForm();
@@ -1257,22 +1490,39 @@ function PlantSourcingDirectory({ items, setItems }) {
       return '';
     }
   };
+  const confirmSearch = input => {
+    const query = search.trim();
+    if (query !== search) setSearch(query);
+    input?.blur();
+  };
+  const submitSearch = event => {
+    event.preventDefault();
+    confirmSearch(event.currentTarget.querySelector('input[type="search"]'));
+  };
+  const searchKeyDown = event => {
+    if (event.key !== 'Enter') return;
+    event.preventDefault();
+    confirmSearch(event.currentTarget);
+  };
 
   return <div className="page plant-sourcing-page">
     <SectionTitle
       eyebrow="Curated grower library"
       title="Plant Sourcing Directory"
       text="Find trusted Delaware garden centers and reputable specialty growers by nursery, plant, or category."
-      action={<button type="button" className="primary source-add-button" onClick={beginAdd}>+ Add nursery</button>}
+      action={<div className="source-title-actions"><button type="button" onClick={() => beginHold()}>Availability hold</button><button type="button" className="primary source-add-button" onClick={beginAdd}>+ Add nursery</button></div>}
     />
 
     <section className="source-overview glass">
       <span className="source-butterfly" aria-hidden="true">&#129419;</span>
       <div className="source-search-row">
-        <label className="source-search">
+        <form className="source-search" role="search" onSubmit={submitSearch}>
           <span>Search the directory</span>
-          <input type="search" placeholder="Search nursery, plant, or category…" value={search} onChange={event => setSearch(event.target.value)} />
-        </label>
+          <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) auto', gap: 8 }}>
+            <input type="search" enterKeyHint="search" aria-label="Search nursery, plant, or category" placeholder="Search nursery, plant, or category…" value={search} onChange={event => setSearch(event.target.value)} onKeyDown={searchKeyDown} />
+            <button type="submit" className="primary" style={{ minHeight: 52, border: '1px solid var(--source-olive)', borderRadius: 14, padding: '11px 18px', background: 'var(--source-olive)', color: '#fff', fontWeight: 800 }}>Search</button>
+          </div>
+        </form>
         <div className="source-stats" aria-label="Plant sourcing summary">
           <div><strong>{activeItems.length}</strong><span>Active sources</span></div>
           <div><strong>{localCount}</strong><span>Delaware sources</span></div>
@@ -1283,12 +1533,44 @@ function PlantSourcingDirectory({ items, setItems }) {
         {['All', ...PLANT_CATEGORIES].map(item => <button type="button" key={item} className={category === item ? 'active' : ''} onClick={() => setCategory(item)} aria-pressed={category === item}>{item === 'All' ? 'All specialties' : categoryTitle(item)}</button>)}
       </div>
       <div className="source-view-filters">
-        <button type="button" className={favoritesOnly ? 'active' : ''} onClick={() => setFavoritesOnly(value => !value)} aria-pressed={favoritesOnly}>★ Favorites</button>
+        <button type="button" className={favoritesOnly ? 'active' : ''} onClick={() => setFavoritesOnly(value => !value)} aria-pressed={favoritesOnly}>★ Preferred</button>
         <button type="button" className={approvedOnly ? 'active approved' : ''} onClick={() => setApprovedOnly(value => !value)} aria-pressed={approvedOnly}>Tierra Fleur Approved</button>
         <button type="button" className={showArchived ? 'active archive' : ''} onClick={() => setShowArchived(value => !value)} aria-pressed={showArchived}>{showArchived ? 'Viewing archived' : 'View archived'}</button>
         <span>{filtered.length} {filtered.length === 1 ? 'nursery' : 'nurseries'}</span>
       </div>
     </section>
+
+    {search.trim() && <section className={`source-availability-notice glass${hasConfirmedSupplier ? ' confirmed' : ''}`} role="status">
+      <div><span>{hasConfirmedSupplier ? 'Supplier confirmation saved' : 'Availability safeguard'}</span><strong>{hasConfirmedSupplier ? 'A confirmed supplier is saved for this plant.' : 'No confirmed supplier is currently saved. Review likely specialty growers or add a new nursery.'}</strong><p>Directory and catalog matches do not guarantee current stock, price, shipping eligibility, or delivery timing.</p></div>
+      <button type="button" onClick={() => beginHold()}>Availability must be confirmed</button>
+    </section>}
+
+    {holdOpen && <form className="source-hold-form panel glass" onSubmit={saveHold}>
+      <div className="source-form-header"><div><span className="form-eyebrow">Client request safeguard</span><h3>Availability must be confirmed</h3></div><button type="button" onClick={() => setHoldOpen(false)}>Close</button></div>
+      <p className="source-safety-copy">This record is a sourcing request, not a stock promise. Add confirmation details only after contacting the supplier.</p>
+      <div className="source-form-grid">
+        <label>Requested plant *<input required value={holdForm.requestedPlant} onChange={event => setHoldForm(current => ({ ...current, requestedPlant: event.target.value }))} /></label>
+        <label>Preferred variety<input value={holdForm.preferredVariety} onChange={event => setHoldForm(current => ({ ...current, preferredVariety: event.target.value }))} /></label>
+        <label>Quantity<input type="number" min="1" step="1" value={holdForm.quantity} onChange={event => setHoldForm(current => ({ ...current, quantity: event.target.value }))} /></label>
+        <label>Needed by<input type="date" value={holdForm.neededBy} onChange={event => setHoldForm(current => ({ ...current, neededBy: event.target.value }))} /></label>
+        <label>Use<select value={holdForm.useEnvironment} onChange={event => setHoldForm(current => ({ ...current, useEnvironment: event.target.value }))}><option>Outdoor</option><option>Greenhouse</option><option>Indoor / conservatory</option></select></label>
+        <label>Likely supplier<select value={holdForm.nurseryId} onChange={event => setHoldForm(current => ({ ...current, nurseryId: event.target.value }))}><option value="">Not selected</option>{normalizedItems.filter(item => !item.archived).map(item => <option key={item.id} value={item.nurseryId || item.id}>{item.name}</option>)}</select></label>
+        <label>Link lead<select value={holdForm.leadId} onChange={event => setHoldForm(current => ({ ...current, leadId: event.target.value }))}><option value="">Not linked</option>{data.leads.filter(item => !item.archived).map(item => <option key={item.leadId} value={item.leadId}>{item.fullName || item.organizationName}</option>)}</select></label>
+        <label>Link estimate<select value={holdForm.estimateId} onChange={event => setHoldForm(current => ({ ...current, estimateId: event.target.value }))}><option value="">Not linked</option>{data.estimates.filter(item => !item.archived && item.documentType !== 'Invoice').map(item => <option key={item.estimateId || item.id} value={item.estimateId || item.id}>{item.estimateNumber || 'Draft estimate'} · {item.client || item.title}</option>)}</select></label>
+        <label>Link project<select value={holdForm.projectId} onChange={event => setHoldForm(current => ({ ...current, projectId: event.target.value }))}><option value="">Not linked</option>{data.projects.filter(item => !item.archived).map(item => <option key={item.projectId} value={item.projectId}>{item.projectId} · {item.name}</option>)}</select></label>
+        <label>Availability status<select value={holdForm.availabilityStatus} onChange={event => setHoldForm(current => ({ ...current, availabilityStatus: event.target.value }))}>{PLANT_AVAILABILITY_STATUSES.map(item => <option key={item}>{item}</option>)}</select></label>
+        <label>Confirmed supplier<input value={holdForm.confirmedSupplier} onChange={event => setHoldForm(current => ({ ...current, confirmedSupplier: event.target.value }))} placeholder="Complete after direct confirmation" /></label>
+        <label>Confirmed price<input type="number" min="0" step="0.01" value={holdForm.confirmedPrice} onChange={event => setHoldForm(current => ({ ...current, confirmedPrice: event.target.value }))} /></label>
+        <label>Confirmation date<input type="date" value={holdForm.confirmationDate} onChange={event => setHoldForm(current => ({ ...current, confirmationDate: event.target.value }))} /></label>
+        <label className="field-wide">Acceptable substitutes<textarea value={holdForm.acceptableSubstitutes} onChange={event => setHoldForm(current => ({ ...current, acceptableSubstitutes: event.target.value }))} /></label>
+        <label className="field-wide">Verification note<textarea value={holdForm.verificationNote} onChange={event => setHoldForm(current => ({ ...current, verificationNote: event.target.value }))} placeholder="Who confirmed it, contact method, stock note, or follow-up needed" /></label>
+        <div className="source-toggle-row field-wide"><label><input type="checkbox" checked={holdForm.clientApprovalRequired} onChange={event => setHoldForm(current => ({ ...current, clientApprovalRequired: event.target.checked }))} /> Client approval required for substitutions</label></div>
+      </div>
+      {holdMessage && <p className="source-form-error" role="alert">{holdMessage}</p>}
+      <div className="source-form-actions"><button type="button" onClick={() => setHoldOpen(false)}>Cancel</button><button className="primary">Save sourcing hold{holdForm.estimateId ? ' and add to estimate' : ''}</button></div>
+    </form>}
+
+    {!holdOpen && holdMessage && <p className="source-hold-success" role="status">{holdMessage}</p>}
 
     {formOpen && <form className="source-form panel glass" onSubmit={save}>
       <div className="source-form-header">
@@ -1299,20 +1581,38 @@ function PlantSourcingDirectory({ items, setItems }) {
         <label>Nursery name *<input required value={form.name} onChange={event => setField('name', event.target.value)} placeholder="Nursery or grower name" /></label>
         <label>Website<input inputMode="url" value={form.website} onChange={event => setField('website', event.target.value)} placeholder="https://…" /></label>
         <label>Location<input value={form.location} onChange={event => setField('location', event.target.value)} placeholder="City, state or service area" /></label>
+        <label>City<input value={form.city} onChange={event => setField('city', event.target.value)} placeholder="City" /></label>
+        <label>State<input value={form.state} onChange={event => setField('state', event.target.value)} placeholder="State" /></label>
         <label>Phone<input inputMode="tel" value={form.phone} onChange={event => setField('phone', event.target.value)} placeholder="Nursery phone" /></label>
         <label>Email<input type="email" inputMode="email" value={form.email} onChange={event => setField('email', event.target.value)} placeholder="Nursery email" /></label>
-        <label>Source type<select value={form.sourceType} onChange={event => setField('sourceType', event.target.value)}>{['Local', 'Online', 'Both'].map(item => <option key={item}>{item}</option>)}</select></label>
+        <label>Source type<select value={form.sourceType} onChange={event => setField('sourceType', event.target.value)}>{['Local', 'Online', 'Both', 'Wholesale'].map(item => <option key={item}>{item}</option>)}</select></label>
         <label>Ships to Delaware<select value={form.shipsToDelaware} onChange={event => setField('shipsToDelaware', event.target.value)}>{['Yes', 'No', 'Local pickup', 'Ask nursery'].map(item => <option key={item}>{item}</option>)}</select></label>
+        <label>Local pickup<select value={form.localPickupAvailability} onChange={event => setField('localPickupAvailability', event.target.value)}>{['Available', 'Not available', 'Appointment required', 'Ask nursery'].map(item => <option key={item}>{item}</option>)}</select></label>
         <label>Wholesale availability<select value={form.wholesaleAvailability} onChange={event => setField('wholesaleAvailability', event.target.value)}>{['Available', 'Not available', 'Ask nursery'].map(item => <option key={item}>{item}</option>)}</select></label>
+        <label>Retail availability<select value={form.retailAvailability} onChange={event => setField('retailAvailability', event.target.value)}>{['Available', 'Not available', 'Trade only', 'Ask nursery'].map(item => <option key={item}>{item}</option>)}</select></label>
+        <label>Last verified<input type="date" value={form.lastVerifiedDate} onChange={event => setField('lastVerifiedDate', event.target.value)} /></label>
+        <label>Direct contact<input value={form.directContact} onChange={event => setField('directContact', event.target.value)} placeholder="Name or department" /></label>
         <label className="field-wide">Specialties<textarea value={form.specialties} onChange={event => setField('specialties', event.target.value)} placeholder="What this nursery does especially well" /></label>
         <label className="field-wide">Plants carried<textarea value={form.plants} onChange={event => setField('plants', event.target.value)} placeholder="Specific plants, varieties, supplies, or product lines" /></label>
+        <label className="field-wide">Plant keywords and synonyms<textarea value={form.plantKeywords} onChange={event => setField('plantKeywords', event.target.value)} placeholder="Passion fruit, passionflower, maypop, tropical fruiting vine…" /></label>
+        <label className="field-wide">Botanical names<textarea value={form.botanicalNames} onChange={event => setField('botanicalNames', event.target.value)} placeholder="Passiflora edulis, Passiflora incarnata…" /></label>
+        <label className="field-wide">Varieties and cultivars<textarea value={form.varieties} onChange={event => setField('varieties', event.target.value)} /></label>
+        <label className="field-wide">Greenhouse specialties<textarea value={form.greenhouseSpecialties} onChange={event => setField('greenhouseSpecialties', event.target.value)} /></label>
         <fieldset className="source-category-picker field-wide">
           <legend>Plant specialties *</legend>
           <div>{PLANT_CATEGORIES.map(item => <label key={item} className={form.categories.includes(item) ? 'selected' : ''}><input type="checkbox" checked={form.categories.includes(item)} onChange={() => toggleCategory(item)} />{categoryTitle(item)}</label>)}</div>
         </fieldset>
-        <label className="field-wide">Notes<textarea value={form.notes} onChange={event => setField('notes', event.target.value)} placeholder="Ordering windows, quality notes, minimums, contacts, or project experience" /></label>
+        <label className="field-wide">Shipping notes<textarea value={form.shippingNotes} onChange={event => setField('shippingNotes', event.target.value)} /></label>
+        <label>Minimum order<input value={form.minimumOrder} onChange={event => setField('minimumOrder', event.target.value)} /></label>
+        <label>Delivery information<input value={form.deliveryInformation} onChange={event => setField('deliveryInformation', event.target.value)} /></label>
+        <label className="field-wide">Verification source<input inputMode="url" value={form.verificationSource} onChange={event => setField('verificationSource', event.target.value)} placeholder="Official contact, catalog, or shipping page" /></label>
+        <label className="field-wide">Wholesale account notes<textarea value={form.wholesaleAccountNotes} onChange={event => setField('wholesaleAccountNotes', event.target.value)} /></label>
+        <label className="field-wide">User notes<textarea value={form.userNotes} onChange={event => setField('userNotes', event.target.value)} placeholder="Ordering windows, quality notes, contacts, or project experience" /></label>
+        <label className="field-wide">Poor supplier experience<textarea value={form.poorExperience} onChange={event => setField('poorExperience', event.target.value)} placeholder="Leave blank unless an experience should be remembered" /></label>
+        <label className="field-wide">General notes<textarea value={form.notes} onChange={event => setField('notes', event.target.value)} /></label>
         <div className="source-toggle-row field-wide">
-          <label><input type="checkbox" checked={form.favorite} onChange={event => setField('favorite', event.target.checked)} /> Favorite source</label>
+          <label><input type="checkbox" checked={form.preferred} onChange={event => setField('preferred', event.target.checked)} /> Preferred supplier</label>
+          <label><input type="checkbox" checked={form.trusted} onChange={event => setField('trusted', event.target.checked)} /> Trusted supplier</label>
           <label className="approved-toggle"><input type="checkbox" checked={form.approved} onChange={event => setField('approved', event.target.checked)} /> Tierra Fleur Approved</label>
         </div>
       </div>
@@ -1328,14 +1628,14 @@ function PlantSourcingDirectory({ items, setItems }) {
           <small>{group.nurseries.length} {group.nurseries.length === 1 ? 'source' : 'sources'}</small>
         </div>
         <div className="source-card-grid">
-          {group.nurseries.map(item => <article className={`source-card glass${item.favorite ? ' favorite' : ''}${item.approved ? ' approved' : ''}${item.archived ? ' archived' : ''}`} key={item.id}>
+          {group.nurseries.map(item => <article className={`source-card glass${item.preferred ? ' favorite' : ''}${item.trusted ? ' trusted' : ''}${item.approved ? ' approved' : ''}${item.archived ? ' archived' : ''}`} key={item.id}>
             <div className="source-card-top">
               <div>
-                <div className="source-card-kicker"><span>{item.sourceType}</span>{item.archived && <span className="archived-badge">Archived</span>}</div>
+                <div className="source-card-kicker"><span>{item.sourceType}</span>{item.preferred && <span>Preferred</span>}{item.trusted && <span>Trusted</span>}{search.trim() && <span className="source-match-badge">{item._match?.matchType || 'Likely specialty grower'}</span>}{item.archived && <span className="archived-badge">Archived</span>}</div>
                 <h4>{item.name}</h4>
                 <p>{item.location || 'Location to be confirmed'}</p>
               </div>
-              <button type="button" className="source-favorite" onClick={() => patchItem(item.id, { favorite: !item.favorite })} aria-label={`${item.favorite ? 'Remove' : 'Add'} ${item.name} ${item.favorite ? 'from' : 'to'} favorites`} aria-pressed={item.favorite}>{item.favorite ? '★' : '☆'}</button>
+              <button type="button" className="source-favorite" onClick={() => patchItem(item.id, { preferred: !item.preferred, favorite: !item.preferred })} aria-label={`${item.preferred ? 'Remove' : 'Mark'} ${item.name} ${item.preferred ? 'as preferred' : 'as a preferred supplier'}`} aria-pressed={item.preferred}>{item.preferred ? '★' : '☆'}</button>
             </div>
             <div className="source-category-tags">{item.categories.map(itemCategory => <span key={itemCategory}>{categoryTitle(itemCategory)}</span>)}</div>
             <div className="source-description">
@@ -1344,14 +1644,36 @@ function PlantSourcingDirectory({ items, setItems }) {
             </div>
             <dl className="source-facts">
               <div><dt>Ships to Delaware</dt><dd>{item.shipsToDelaware}</dd></div>
+              <div><dt>Local pickup</dt><dd>{item.localPickupAvailability}</dd></div>
               <div><dt>Wholesale</dt><dd>{item.wholesaleAvailability}</dd></div>
+              <div><dt>Retail</dt><dd>{item.retailAvailability}</dd></div>
             </dl>
+            {search.trim() && <div className={`source-availability-status status-${availabilityFor(item).status.toLowerCase().replaceAll(' ', '-')}`}>
+              <div><span>Availability for “{search.trim()}”</span><strong>{availabilityFor(item).status}</strong><small>{availabilityFor(item).lastVerifiedDate ? `Last verified ${formatDate(availabilityFor(item).lastVerifiedDate)}` : 'Not yet verified for this request'}</small></div>
+              <p>{availabilityFor(item).note || 'Contact the nursery before quoting stock, price, shipping, or delivery.'}</p>
+            </div>}
+            {(item.shippingNotes || item.minimumOrder || item.deliveryInformation) && <div className="source-ordering-details"><span>Ordering details</span>{item.shippingNotes && <p>{item.shippingNotes}</p>}<small>{[item.minimumOrder && `Minimum: ${item.minimumOrder}`, item.deliveryInformation].filter(Boolean).join(' · ')}</small></div>}
             {item.notes && <p className="source-notes">{item.notes}</p>}
+            {item.userNotes && <p className="source-notes"><strong>User note:</strong> {item.userNotes}</p>}
+            {item.poorExperience && <p className="source-poor-experience"><strong>Supplier experience note:</strong> {item.poorExperience}</p>}
+            {attachmentsFor(item).length > 0 && <div className="source-supplier-attachments"><span>Saved supplier screenshots</span><div>{attachmentsFor(item).map(photo => <figure key={photo.photoId}><img src={photo.image} alt={photo.label || `${item.name} supplier reference`} /><figcaption>{photo.label || 'Supplier reference'}<button type="button" onClick={() => removeSupplierScreenshot(photo, item.nurseryId || item.id)}>Remove</button></figcaption></figure>)}</div></div>}
+            {attachmentStatus?.nurseryId === (item.nurseryId || item.id) && <p className={attachmentStatus.error ? 'source-attachment-status error' : 'source-attachment-status'} role="status">{attachmentStatus.message}</p>}
+            {verification?.nurseryId === (item.nurseryId || item.id) && <div className="source-verification-editor">
+              <label>Status<select value={verification.status} onChange={event => setVerification(current => ({ ...current, status: event.target.value }))}>{PLANT_AVAILABILITY_STATUSES.map(status => <option key={status}>{status}</option>)}</select></label>
+              <label>Verification note<textarea value={verification.note} onChange={event => setVerification(current => ({ ...current, note: event.target.value }))} placeholder="Contact name, response, price, timing, or stock detail" /></label>
+              <div><button type="button" onClick={() => setVerification(null)}>Cancel</button><button type="button" className="primary" onClick={() => updateAvailability(verification.nurseryId, verification.status, verification.note)}>Save verification</button></div>
+            </div>}
             <button type="button" className={item.approved ? 'source-approved active' : 'source-approved'} onClick={() => patchItem(item.id, { approved: !item.approved })} aria-pressed={item.approved}><span aria-hidden="true">✦</span>{item.approved ? 'Tierra Fleur Approved' : 'Mark Tierra Fleur Approved'}</button>
             <div className="source-card-actions">
               {websiteUrl(item.website) ? <a href={websiteUrl(item.website)} target="_blank" rel="noreferrer">Visit website</a> : <span className="source-link-disabled">Website needed</span>}
               {item.phone && <a className="source-contact-secondary" href={`tel:${item.phone}`}>Call</a>}
               {item.email && <a className="source-contact-secondary" href={`mailto:${item.email}`}>Email</a>}
+              <label className="source-attachment-button">Add screenshot<input type="file" accept={PROJECT_PHOTO_ACCEPT} onChange={event => { uploadSupplierScreenshot(item, event.target.files?.[0]); event.target.value = ''; }} /></label>
+              {search.trim() && <button type="button" onClick={() => beginVerification(item)}>Verify availability</button>}
+              {search.trim() && <button type="button" onClick={() => updateAvailability(item.nurseryId || item.id, 'Confirmed available', 'Confirmed directly with nursery; add price and timing in the sourcing hold.')}>Mark confirmed</button>}
+              {search.trim() && <button type="button" onClick={() => updateAvailability(item.nurseryId || item.id, 'Out of stock', 'Marked unavailable for this request.')}>Mark unavailable</button>}
+              {search.trim() && <button type="button" onClick={() => beginHold(item)}>Add to sourcing list</button>}
+              {search.trim() && <button type="button" onClick={() => beginHold(item, true)}>Add substitute option</button>}
               <button type="button" onClick={() => edit(item)}>Edit</button>
               <button type="button" onClick={() => archive(item)}>{item.archived ? 'Restore' : 'Archive'}</button>
               <button type="button" className="danger" onClick={() => remove(item)}>Delete</button>
@@ -1359,8 +1681,15 @@ function PlantSourcingDirectory({ items, setItems }) {
           </article>)}
         </div>
       </section>)}
-      {!filtered.length && <section className="source-empty glass"><span aria-hidden="true">&#129419;</span><h3>No nurseries match this view.</h3><p>Try another plant specialty, clear a filter, or add a new source.</p></section>}
+      {!filtered.length && <section className="source-empty glass"><span aria-hidden="true">&#129419;</span><h3>{search.trim() ? 'No confirmed supplier is currently saved. Review likely specialty growers or add a new nursery.' : 'No nurseries match this view.'}</h3><p>Directory matches never promise current inventory. Try another specialty or add a source to verify.</p></section>}
     </div>
+    <section className="source-hold-list panel glass">
+      <div className="source-form-header"><div><span className="form-eyebrow">Saved sourcing list</span><h3>Availability holds</h3></div><button type="button" onClick={() => beginHold()}>Add request</button></div>
+      <div>{data.sourcingRecords.filter(item => item.availabilityMustBeConfirmed && !item.archived).map(item => {
+        const nursery = normalizedItems.find(source => (source.nurseryId || source.id) === item.nurseryId);
+        return <article key={item.sourcingRecordId || item.id}><div><span>{item.availabilityStatus || 'Unknown'}</span><strong>{item.requestedPlant || item.plant}</strong><small>{nursery?.name || item.confirmedSupplier || 'Supplier not confirmed'} · quantity {item.quantity || 1}{item.neededBy ? ` · needed ${formatDate(item.neededBy)}` : ''}</small></div><button type="button" onClick={() => setData(current => ({ ...current, sourcingRecords: current.sourcingRecords.map(record => (record.sourcingRecordId || record.id) === (item.sourcingRecordId || item.id) ? { ...record, archived: true } : record) }))}>Archive</button></article>;
+      })}{!data.sourcingRecords.some(item => item.availabilityMustBeConfirmed && !item.archived) && <p>No specialty-plant availability holds are saved.</p>}</div>
+    </section>
   </div>;
 }
 

@@ -145,7 +145,38 @@ function LeadEditor({ initial, data, setData, onClose }) {
           ? current.calendarEvents.map(item => item.calendarEventId === consultation.calendarEventId ? { ...item, title: `Consultation · ${record.fullName || record.organizationName}`, date: record.consultationDate, endDate: record.consultationDate, clientId: record.clientId, projectId: record.projectId, updatedAt: now() } : item)
           : [...current.calendarEvents, createCalendarEvent({ title: `Consultation · ${record.fullName || record.organizationName}`, description: record.serviceRequested, eventType: 'Consultation', group: 'tierra', date: record.consultationDate, endDate: record.consultationDate, startTime: '10:00', endTime: '11:00', leadId: record.leadId, clientId: record.clientId, projectId: record.projectId, relatedRecordId: record.leadId })];
       }
-      return { ...current, leads, calendarEvents };
+      let sourcingRecords = current.sourcingRecords;
+      if (record.availabilityMustBeConfirmed && record.requestedPlant.trim()) {
+        const existingHold = current.sourcingRecords.find(item => item.leadId === record.leadId && item.availabilityMustBeConfirmed && !item.archived && String(item.requestedPlant || item.plant).trim().toLowerCase() === record.requestedPlant.trim().toLowerCase());
+        const holdId = existingHold?.sourcingRecordId || existingHold?.id || uid('source-record');
+        const hold = {
+          ...(existingHold || {}),
+          id: existingHold?.id || holdId,
+          sourcingRecordId: holdId,
+          leadId: record.leadId,
+          clientId: record.clientId || '',
+          projectId: record.projectId || '',
+          plant: record.requestedPlant.trim(),
+          requestedPlant: record.requestedPlant.trim(),
+          preferredVariety: record.preferredVariety || '',
+          variety: record.preferredVariety || '',
+          acceptableSubstitutes: record.acceptableSubstitutes || '',
+          substitutePlant: record.acceptableSubstitutes || '',
+          clientApprovalRequired: record.clientApprovalRequired !== false,
+          quantity: record.requestedPlantQuantity || 1,
+          neededBy: record.requestedPlantNeededBy || '',
+          useEnvironment: record.requestedPlantUse || 'Outdoor',
+          availabilityMustBeConfirmed: true,
+          availabilityStatus: existingHold?.availabilityStatus || 'Unknown',
+          status: existingHold?.status || 'Requested',
+          pickupStatus: existingHold?.pickupStatus || 'Not ordered',
+          archived: false,
+          createdAt: existingHold?.createdAt || now(),
+          updatedAt: now(),
+        };
+        sourcingRecords = existingHold ? current.sourcingRecords.map(item => item === existingHold ? hold : item) : [hold, ...current.sourcingRecords];
+      }
+      return { ...current, leads, calendarEvents, sourcingRecords };
     });
     onClose(record.leadId);
   };
@@ -205,6 +236,8 @@ function LeadEditor({ initial, data, setData, onClose }) {
       <label>Stage<select value={form.currentStage} onChange={event => set({ currentStage: event.target.value })}>{LEAD_STAGES.map(item => <option key={item}>{item}</option>)}</select></label>
       <label>Priority<select value={form.priorityLevel} onChange={event => set({ priorityLevel: event.target.value })}>{LEAD_PRIORITIES.map(item => <option key={item}>{item}</option>)}</select></label>
       {form.currentStage === 'Lost' && <label className="wide">Lost reason<input value={form.lostReason} onChange={event => set({ lostReason: event.target.value })} /></label>}
+      <label className="wide growth-availability-check"><input type="checkbox" checked={Boolean(form.availabilityMustBeConfirmed)} onChange={event => set({ availabilityMustBeConfirmed: event.target.checked })} /> Availability must be confirmed</label>
+      {form.availabilityMustBeConfirmed && <><label>Requested plant<input required value={form.requestedPlant} onChange={event => set({ requestedPlant: event.target.value })} /></label><label>Preferred variety<input value={form.preferredVariety} onChange={event => set({ preferredVariety: event.target.value })} /></label><label>Quantity<input type="number" min="1" step="1" value={form.requestedPlantQuantity} onChange={event => set({ requestedPlantQuantity: event.target.value })} /></label><label>Needed by<input type="date" value={form.requestedPlantNeededBy} onChange={event => set({ requestedPlantNeededBy: event.target.value })} /></label><label>Use<select value={form.requestedPlantUse} onChange={event => set({ requestedPlantUse: event.target.value })}><option>Outdoor</option><option>Greenhouse</option><option>Indoor / conservatory</option></select></label><label className="wide">Acceptable substitutes<input value={form.acceptableSubstitutes} onChange={event => set({ acceptableSubstitutes: event.target.value })} /></label><label className="wide growth-availability-check"><input type="checkbox" checked={form.clientApprovalRequired !== false} onChange={event => set({ clientApprovalRequired: event.target.checked })} /> Client approval required for substitutions</label></>}
     </div></fieldset>
     <fieldset><legend>Dates and history</legend><div className="growth-form-grid">
       <label>Date received<input type="date" value={form.dateReceived} onChange={event => set({ dateReceived: event.target.value })} /></label>

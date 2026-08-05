@@ -282,3 +282,5 @@
 .portfolio-gallery>button{grid-template-columns:70px 1fr}
 .portfolio-gallery img,.portfolio-gallery>button>span{width:70px;height:82px}
 }
+
+.growth-availability-check{display:flex!important;align-items:center;flex-direction:row!important;gap:10px;min-height:48px;border:1px solid #cbb17d;border-radius:13px;padding:11px 13px;background:#fff6e3;color:#654f2f!important;font-weight:850!important}.growth-availability-check input{width:22px!important;height:22px;min-height:0!important;accent-color:#52684f}

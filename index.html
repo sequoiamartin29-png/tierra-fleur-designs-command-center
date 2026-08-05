@@ -14,6 +14,17 @@
     </style>
     <script>
       (function () {
+        if (window.location.protocol === 'file:') {
+          var showLocalPreviewGuidance = function () {
+            var root = document.getElementById('root');
+            if (!root) return;
+            root.innerHTML = '<main class="startup-shell"><section class="startup-card" role="status"><span>Local preview required</span><h1>Open this build through a web server.</h1><p>This production build cannot be started by double-clicking <strong>dist/index.html</strong>. Browsers restrict JavaScript modules and application storage on <strong>file://</strong> pages. Run <strong>npm run preview</strong> and open the local address Vite provides, or use the published Netlify site.</p></section></main>';
+          };
+          if (document.getElementById('root')) showLocalPreviewGuidance();
+          else document.addEventListener('DOMContentLoaded', showLocalPreviewGuidance, { once: true });
+          return;
+        }
+
         var cryptoApi = window.crypto || window.msCrypto;
         if (cryptoApi && typeof cryptoApi.randomUUID !== 'function') {
           var uuidFallback = function () {
