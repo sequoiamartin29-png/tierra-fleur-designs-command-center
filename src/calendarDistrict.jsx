@@ -8,6 +8,7 @@ import {
   RECURRENCE_OPTIONS,
   SCHOOL_EVENT_TYPES,
   SHIFT_TYPES,
+  TFD_EVENT_TYPES,
   addDays,
   addMonths,
   applyRecurringEdit,
@@ -46,7 +47,7 @@ function SectionTitle({ eyebrow, title, text, action }) {
 function eventGroupForType(type) {
   if (type === 'Work Shift') return 'work';
   if (['School Class', 'Lab', 'Homework', 'Assignment', 'Exam', 'Study Session'].includes(type)) return 'school';
-  if (type === 'Tierra Fleur') return 'tierra';
+  if (type === 'Tierra Fleur' || TFD_EVENT_TYPES.includes(type)) return 'tierra';
   return 'personal';
 }
 
@@ -331,17 +332,20 @@ function EventEditor({ initial, data, events, onClose, onSave, mode = 'edit' }) 
 
 function QuickAdd({ date, onChoose, onClose }) {
   const options = [
-    ['Work Shift', 'Work Shift', 'Shift'], ['Class', 'School Class', 'Class'], ['Lab', 'Lab', 'Lab'], ['Assignment', 'Assignment', 'Due'], ['Study Session', 'Study Session', 'Study'], ['Appointment', 'Appointment', 'Appt'], ['Personal Event', 'Personal', 'Personal'],
+    ['Work Shift', 'Work Shift', 'Shift'], ['Class', 'School Class', 'Class'], ['Assignment', 'Assignment', 'Due'], ['Lead Follow-up', 'Lead Follow-up', 'Lead'], ['Consultation', 'Consultation', 'TFD'], ['Project Workday', 'Project Workday', 'Job'], ['Appointment', 'Appointment', 'Appt'], ['Personal Event', 'Personal', 'Personal'],
   ];
   return <div className="calendar-modal-backdrop" onMouseDown={event => event.target === event.currentTarget && onClose()}><section className="calendar-quick-add panel glass"><header><div><span>Calendar District</span><h2>Quick Add</h2><p>{dateLabel(date)}</p></div><button onClick={onClose} aria-label="Close quick add">×</button></header><div>{options.map(([label, type, badge]) => <button key={label} onClick={() => onChoose(type)}><span>{badge}</span><strong>Add {label}</strong><small>Continue →</small></button>)}</div></section></div>;
 }
 
-function EventDetails({ event, data, setData, onClose, onEdit, onDuplicate, onAddStudy, navigate, openProject }) {
+function EventDetails({ event, data, setData, onClose, onEdit, onDuplicate, onAddStudy, navigate, openProject, openLead }) {
   const [deleteScope, setDeleteScope] = useState(event.recurring ? 'This event only' : 'Entire series');
   const [pendingDelete, setPendingDelete] = useState(false);
   const duration = event.group === 'work' ? scheduledShiftHours(event) : timedEventHours(event);
   const job = data.calendarJobs.find(item => item.jobId === event.jobId);
   const course = data.calendarCourses.find(item => item.courseId === event.courseId);
+  const leadId = event.leadId || (event.relatedRecordType === 'lead' ? event.relatedRecordId : '');
+  const lead = data.leads.find(item => item.leadId === leadId);
+  const linkedRecordLabel = lead?.fullName || lead?.organizationName || job?.jobName || course?.courseName || event.projectId || 'No link';
   const patch = (changes, scope = event.recurring ? 'This event only' : 'Entire series') => setData(current => ({ ...current, calendarEvents: applyRecurringEdit(current.calendarEvents, event, changes, scope) }));
   const archive = () => {
     const sourceId = event.originCalendarEventId || event.calendarEventId;
@@ -369,11 +373,11 @@ function EventDetails({ event, data, setData, onClose, onEdit, onDuplicate, onAd
   };
   return <div className="calendar-modal-backdrop" onMouseDown={click => click.target === click.currentTarget && onClose()}><section className="calendar-details panel glass" style={{ '--event-color': eventTone(event, data.calendarJobs, data.calendarCourses) }}>
     <header><div><span>{event.eventType}</span><h2>{event.title}</h2><p>{dateLabel(event.date)}{event.startTime ? ` · ${timeLabel(event.startTime)}–${timeLabel(event.endTime)}` : event.dueTime ? ` · Due ${timeLabel(event.dueTime)}` : ''}</p></div><button onClick={onClose} aria-label="Close event details">×</button></header>
-    <div className="calendar-detail-facts"><div><span>Duration</span><strong>{duration ? hours(duration) : event.estimatedMinutes ? `${event.estimatedMinutes} min estimated` : 'Open'}</strong></div><div><span>Linked to</span><strong>{job?.jobName || course?.courseName || event.projectId || 'No link'}</strong></div><div><span>Status</span><strong>{event.status || (event.completed ? 'Completed' : 'Scheduled')}</strong></div>{event.group === 'work' && <div><span>Estimated gross</span><strong>{money(estimatedGrossPay(event))}</strong></div>}</div>
+    <div className="calendar-detail-facts"><div><span>Duration</span><strong>{duration ? hours(duration) : event.estimatedMinutes ? `${event.estimatedMinutes} min estimated` : 'Open'}</strong></div><div><span>Linked to</span><strong>{linkedRecordLabel}</strong></div><div><span>Status</span><strong>{event.status || (event.completed ? 'Completed' : 'Scheduled')}</strong></div>{event.group === 'work' && <div><span>Estimated gross</span><strong>{money(estimatedGrossPay(event))}</strong></div>}</div>
     {event.group === 'work' && <div className="calendar-detail-callout"><strong>{hours(scheduledShiftHours(event))} scheduled · {hours(actualShiftHours(event))} actual</strong><p>{event.shiftType} · {event.breakMinutes ? `${event.breakMinutes}-minute ${event.breakPaid ? 'paid' : 'unpaid'} break` : 'No break'}{event.endTime < event.startTime ? ' · Overnight' : ''}</p></div>}
     {event.description && <div className="calendar-detail-notes"><span>Description</span><p>{event.description}</p></div>}
     {event.notes && <div className="calendar-detail-notes"><span>Notes</span><p>{event.notes}</p></div>}
-    {(event.projectId || event.billId) && <div className="calendar-related-actions">{event.projectId && <button onClick={() => openProject?.(event.projectId)}>Open linked project</button>}{event.billId && <button onClick={() => navigate?.('finance')}>Open related bill</button>}</div>}
+    {(lead || event.projectId || event.billId) && <div className="calendar-related-actions">{lead && <button onClick={() => openLead?.(lead.leadId)}>Open linked lead</button>}{event.projectId && <button onClick={() => openProject?.(event.projectId)}>Open linked project</button>}{event.billId && <button onClick={() => navigate?.('finance')}>Open related bill</button>}</div>}
     <div className="calendar-detail-actions"><button onClick={() => onEdit(event)}>Edit</button><button onClick={() => onDuplicate(event)}>Duplicate</button>{!event.completed && <button onClick={() => patch({ completed: true, status: event.assignmentId ? 'Completed' : 'Completed' })}>Mark complete</button>}{event.assignmentId && event.status !== 'Submitted' && <button onClick={() => patch({ completed: true, status: 'Submitted' })}>Mark submitted</button>}{event.assignmentId && <button onClick={() => onAddStudy(event)}>Add study time</button>}{event.group === 'work' && event.completed && !event.incomeTransactionId && <button onClick={createIncomeDraft}>Create draft income</button>}<button onClick={archive}>Archive</button></div>
     {event.recurring && <label className="calendar-delete-scope">Delete<select value={deleteScope} onChange={change => setDeleteScope(change.target.value)}><option>This event only</option><option>This and future events</option><option>Entire series</option></select></label>}
     <button className="danger calendar-delete" onClick={remove}>{pendingDelete ? 'Confirm permanent delete' : 'Delete with confirmation'}</button>
@@ -404,7 +408,7 @@ function ManageCalendar({ data, setData, onClose }) {
   </section></div>;
 }
 
-export function CalendarDistrict({ data, setData, initialEventId = '', navigate, openProject }) {
+export function CalendarDistrict({ data, setData, initialEventId = '', navigate, openProject, openLead }) {
   const [view, setView] = useState('month');
   const [anchor, setAnchor] = useState(localDate());
   const [filters, setFilters] = useState({ groups: [], jobId: '', courseId: '', completion: '', timeframe: '', showArchived: false });
@@ -483,7 +487,7 @@ export function CalendarDistrict({ data, setData, initialEventId = '', navigate,
     <button className="calendar-floating-add" onClick={() => openAdd(anchor)}><span>＋</span> Quick Add</button>
     {quickDate && <QuickAdd date={quickDate} onChoose={chooseQuick} onClose={() => setQuickDate('')} />}
     {editor && <EventEditor initial={editor} mode={editorMode} data={data} events={data.calendarEvents} onClose={() => setEditor(null)} onSave={saveEvent} />}
-    {detail && <EventDetails event={detail} data={data} setData={setData} onClose={() => setDetail(null)} onEdit={event => { setDetail(null); setEditor(event); setEditorMode('edit'); }} onDuplicate={duplicate} onAddStudy={addStudy} navigate={navigate} openProject={openProject} />}
+    {detail && <EventDetails event={detail} data={data} setData={setData} onClose={() => setDetail(null)} onEdit={event => { setDetail(null); setEditor(event); setEditorMode('edit'); }} onDuplicate={duplicate} onAddStudy={addStudy} navigate={navigate} openProject={openProject} openLead={openLead} />}
     {managerOpen && <ManageCalendar data={data} setData={setData} onClose={() => setManagerOpen(false)} />}
   </div>;
 }

@@ -8,6 +8,7 @@
     "build": "vite build",
     "test:calendar": "node --test src/calendarEngine.test.js",
     "test:design": "node --test src/designEngine.test.js",
+    "test:growth": "node --test src/growthEngine.test.js",
     "preview": "vite preview"
   },
   "dependencies": {

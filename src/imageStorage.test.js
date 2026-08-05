@@ -59,3 +59,21 @@ test('missing IndexedDB preserves photo records and reports a recoverable error'
   assert.equal(result.data.projectPhotos[0].imageAttachmentId, photo.imageAttachmentId);
   assert.ok(result.errors.length > 0);
 });
+
+test('growth, estimate, referral, and portfolio records remain in the main backup object', () => {
+  const stored = serializeDataForStorage({
+    leads: [{ leadId: 'lead-1', fullName: 'Sample lead' }],
+    followUps: [{ followUpId: 'follow-1', leadId: 'lead-1' }],
+    estimates: [{ estimateId: 'estimate-1', leadId: 'lead-1', total: 500 }],
+    referrals: [{ referralId: 'referral-1', referredLeadId: 'lead-1' }],
+    portfolioEntries: [{ portfolioEntryId: 'portfolio-1', projectId: 'TFD-2026-001' }],
+    projectPhotos: [],
+    designConcepts: [],
+  });
+
+  assert.equal(stored.leads[0].leadId, 'lead-1');
+  assert.equal(stored.followUps[0].leadId, 'lead-1');
+  assert.equal(stored.estimates[0].estimateId, 'estimate-1');
+  assert.equal(stored.referrals[0].referredLeadId, 'lead-1');
+  assert.equal(stored.portfolioEntries[0].projectId, 'TFD-2026-001');
+});

@@ -4,6 +4,8 @@ import { addTimelineEvent, upsertProjectPlant } from './projectEngine.js';
 import { InteractiveDesignStudio } from './designStudioWorkspace.jsx';
 import { createCanvasSettings, createDefaultDesignLayers, createDesignObject } from './designEngine.js';
 import { DesignGuide, PracticeDesign, WalkthroughOverlay, hasSavedPracticeDesign, useDesignGuide } from './designGuide.jsx';
+import { nextEstimateNumber, normalizeEstimateLine } from './growthEngine.js';
+import { localDate } from './calendarEngine.js';
 import {
   prepareProjectPhoto,
   PROJECT_PHOTO_ACCEPT,
@@ -177,6 +179,15 @@ export function migrateDesignData(saved = {}) {
     designPlants: normalize(saved.designPlants, 'plant').map(item => ({
       ...item,
       plantId: item.plantId || item.id,
+      botanicalName: item.botanicalName || item.scientificName || '',
+      scientificName: item.scientificName || item.botanicalName || '',
+      plantType: item.plantType || item.category || 'Plant',
+      category: item.category || item.plantType || 'Plant',
+      zones: item.zones || item.usdaZones || '',
+      sunRequirements: item.sunRequirements || item.light || '',
+      light: item.light || item.sunRequirements || '',
+      waterNeeds: item.waterNeeds || '', soilPreferences: item.soilPreferences || '', matureHeight: item.matureHeight || '', matureWidth: item.matureWidth || '', spacing: item.spacing || '', bloomSeason: item.bloomSeason || '', flowerColor: item.flowerColor || '', fruitSeason: item.fruitSeason || '', edibleStatus: item.edibleStatus || '', toxicityNotes: item.toxicityNotes || '', petSafetyNotes: item.petSafetyNotes || '', nativeStatus: item.nativeStatus || '', pollinatorValue: item.pollinatorValue || '', deerResistance: item.deerResistance || '', companionPlants: item.companionPlants || '', maintenanceNotes: item.maintenanceNotes || '', pruningNotes: item.pruningNotes || '', installationNotes: item.installationNotes || '', supplier: item.supplier || '', supplierCost: item.supplierCost || item.unitCost || '', customerPrice: item.customerPrice || '', photos: Array.isArray(item.photos) ? item.photos : [], tags: Array.isArray(item.tags) ? item.tags : [],
+      informationSource: item.informationSource || (item.builtIn ? 'Built-in information' : 'User-entered information'),
       approved: item.approved !== false,
       favorite: Boolean(item.favorite),
       traits: Array.isArray(item.traits) ? item.traits : String(item.traits || '').split(',').map(value => value.trim()).filter(Boolean),
@@ -963,7 +974,7 @@ function DesignConcepts({ data, setData, project, canvasOnly = false, openPresen
 }
 
 function PlantPalette({ data, setData, projectId }) {
-  const blank = { commonName: '', scientificName: '', category: 'Tree', light: 'Sun', traits: [], nurseryId: '', sourcingRecordId: '', notes: '', approved: true, favorite: false };
+  const blank = { commonName: '', scientificName: '', botanicalName: '', category: 'Tree', plantType: 'Tree', zones: '', light: 'Sun', sunRequirements: 'Sun', waterNeeds: '', soilPreferences: '', matureHeight: '', matureWidth: '', spacing: '', bloomSeason: '', flowerColor: '', fruitSeason: '', edibleStatus: 'Not specified', toxicityNotes: '', petSafetyNotes: '', nativeStatus: 'Not specified', pollinatorValue: '', deerResistance: '', companionPlants: '', maintenanceNotes: '', pruningNotes: '', installationNotes: '', supplier: '', supplierCost: '', customerPrice: '', tags: [], traits: [], nurseryId: '', sourcingRecordId: '', notes: '', approved: true, favorite: false, informationSource: 'User-entered information' };
   const [form, setForm] = useState(blank);
   const [showForm, setShowForm] = useState(false);
   const [query, setQuery] = useState('');
@@ -974,7 +985,7 @@ function PlantPalette({ data, setData, projectId }) {
   useEffect(() => { if (!conceptId && concepts[0]) setConceptId(concepts[0].designId); }, [conceptId, concepts]);
   const sourcing = data.sourcingRecords.filter(item => item.projectId === projectId && !item.archived);
   const plants = data.designPlants.filter(item => item.approved && !item.archived).filter(item => {
-    const text = `${item.commonName} ${item.scientificName} ${item.category} ${item.light} ${(item.traits || []).join(' ')} ${item.notes}`.toLowerCase();
+    const text = `${item.commonName} ${item.scientificName} ${item.botanicalName} ${item.category} ${item.light} ${item.zones} ${item.waterNeeds} ${item.soilPreferences} ${item.bloomSeason} ${item.flowerColor} ${item.nativeStatus} ${item.pollinatorValue} ${(item.traits || []).join(' ')} ${(item.tags || []).join(' ')} ${item.notes}`.toLowerCase();
     const matchesQuery = text.includes(query.toLowerCase());
     const matchesFilter = filter === 'All'
       || (filter === 'Favorite' ? item.favorite : text.includes(filter.toLowerCase()));
@@ -1044,6 +1055,21 @@ function PlantPalette({ data, setData, projectId }) {
     unitCost: record.unitCost || record.estimatedCost,
     notes: record.notes,
   });
+  const addPlantToSourcing = plant => {
+    const id = uid('source-record');
+    setData(current => ({ ...current, sourcingRecords: [{ id, sourcingRecordId: id, projectId, nurseryId: plant.nurseryId || '', plant: plant.commonName, variety: '', quantity: 1, quantityAvailable: '', containerSize: '', wholesaleCost: plant.supplierCost || '', retailCost: plant.customerPrice || '', deliveryFee: '', estimatedCost: plant.supplierCost || '', availabilityDate: '', lastVerifiedDate: today(), pickupStatus: 'Not ordered', status: 'Considering', shortage: false, substitutePlant: '', notes: plant.installationNotes || plant.notes || '', createdAt: now(), archived: false }, ...current.sourcingRecords] }));
+  };
+  const addPlantToEstimate = plant => {
+    const project = data.projects.find(item => item.projectId === projectId);
+    const client = data.clients.find(item => item.clientId === project?.clientId);
+    const line = normalizeEstimateLine({ category: plant.category === 'Tree' ? 'Trees' : 'Plants', description: [plant.commonName, plant.botanicalName || plant.scientificName].filter(Boolean).join(' · '), quantity: 1, unit: 'plant', cost: plant.supplierCost || '', customerPrice: plant.customerPrice || plant.supplierCost || '', taxable: true, notes: plant.installationNotes || plant.notes || '' });
+    setData(current => {
+      const existing = current.estimates.find(item => item.projectId === projectId && item.documentType !== 'Invoice' && item.status === 'Draft' && !item.archived);
+      if (existing) return { ...current, estimates: current.estimates.map(item => item.id === existing.id ? { ...item, lines: [...(item.lines || []), line], lineItems: [...(item.lines || []), line], updatedAt: now() } : item) };
+      const id = uid('estimate');
+      return { ...current, estimates: [{ id, estimateId: id, invoiceId: '', documentType: 'Estimate', estimateNumber: nextEstimateNumber(current.estimates, localDate()), clientId: project?.clientId || '', projectId, client: client?.name || '', title: `${project?.name || 'Landscape'} Proposal`, status: 'Draft', creationDate: localDate(), date: localDate(), serviceAddress: project?.propertyAddress || '', scopeOfWork: project?.notes || '', lines: [line], lineItems: [line], discountAmount: '', taxRate: current.business.defaultTax || '', depositPercent: '30', archived: false, createdAt: now(), updatedAt: now() }, ...current.estimates] };
+    });
+  };
   const patchPlant = (plantId, changes) => setData(current => ({ ...current, designPlants: current.designPlants.map(item => item.plantId === plantId ? { ...item, ...changes } : item) }));
   return <div className="design-library-page">
     <section className="panel glass design-library-controls">
@@ -1054,13 +1080,38 @@ function PlantPalette({ data, setData, projectId }) {
     </section>
     {showForm && <form className="panel glass design-plant-form" onSubmit={addPlant}>
       <input required placeholder="Common name *" value={form.commonName} onChange={event => setForm({ ...form, commonName: event.target.value })} />
-      <input placeholder="Scientific name" value={form.scientificName} onChange={event => setForm({ ...form, scientificName: event.target.value })} />
-      <select value={form.category} onChange={event => setForm({ ...form, category: event.target.value })}>{['Tree', 'Shrub', 'Flower', 'Container', 'Groundcover', 'Herb', 'Grass'].map(item => <option key={item}>{item}</option>)}</select>
-      <select value={form.light} onChange={event => setForm({ ...form, light: event.target.value })}>{['Sun', 'Part Sun', 'Part Shade', 'Shade'].map(item => <option key={item}>{item}</option>)}</select>
+      <input placeholder="Botanical name" value={form.botanicalName} onChange={event => setForm({ ...form, botanicalName: event.target.value, scientificName: event.target.value })} />
+      <select value={form.category} onChange={event => setForm({ ...form, category: event.target.value, plantType: event.target.value })}>{['Tree', 'Shrub', 'Flower', 'Container', 'Groundcover', 'Herb', 'Grass', 'Vegetable', 'Vine'].map(item => <option key={item}>{item}</option>)}</select>
+      <select value={form.light} onChange={event => setForm({ ...form, light: event.target.value, sunRequirements: event.target.value })}>{['Sun', 'Part Sun', 'Part Shade', 'Shade'].map(item => <option key={item}>{item}</option>)}</select>
       <select value={form.nurseryId} onChange={event => setForm({ ...form, nurseryId: event.target.value })}><option value="">Optional nursery</option>{data.nurseries.filter(item => !item.archived).map(item => <option key={item.nurseryId || item.id} value={item.nurseryId || item.id}>{item.name}</option>)}</select>
       <select value={form.sourcingRecordId} onChange={event => setForm({ ...form, sourcingRecordId: event.target.value })}><option value="">Optional sourcing record</option>{sourcing.map(item => <option key={item.sourcingRecordId || item.id} value={item.sourcingRecordId || item.id}>{item.plant}</option>)}</select>
       <textarea placeholder="Design notes, habit, seasonal interest…" value={form.notes} onChange={event => setForm({ ...form, notes: event.target.value })} />
       <fieldset><legend>Plant traits</legend>{['Evergreen', 'Fruit', 'Native', 'Pollinator'].map(trait => <label key={trait}><input type="checkbox" checked={form.traits.includes(trait)} onChange={() => toggleTrait(trait)} />{trait}</label>)}</fieldset>
+      <details className="plant-intelligence-fields"><summary>Plant intelligence details</summary><div>
+        <input placeholder="USDA zones" value={form.zones} onChange={event => setForm({ ...form, zones: event.target.value })} />
+        <input placeholder="Water needs" value={form.waterNeeds} onChange={event => setForm({ ...form, waterNeeds: event.target.value })} />
+        <input placeholder="Soil preferences" value={form.soilPreferences} onChange={event => setForm({ ...form, soilPreferences: event.target.value })} />
+        <input placeholder="Mature height" value={form.matureHeight} onChange={event => setForm({ ...form, matureHeight: event.target.value })} />
+        <input placeholder="Mature width" value={form.matureWidth} onChange={event => setForm({ ...form, matureWidth: event.target.value })} />
+        <input placeholder="Spacing" value={form.spacing} onChange={event => setForm({ ...form, spacing: event.target.value })} />
+        <input placeholder="Bloom season" value={form.bloomSeason} onChange={event => setForm({ ...form, bloomSeason: event.target.value })} />
+        <input placeholder="Flower color" value={form.flowerColor} onChange={event => setForm({ ...form, flowerColor: event.target.value })} />
+        <input placeholder="Fruit / harvest season" value={form.fruitSeason} onChange={event => setForm({ ...form, fruitSeason: event.target.value })} />
+        <select value={form.edibleStatus} onChange={event => setForm({ ...form, edibleStatus: event.target.value })}>{['Not specified', 'Edible', 'Not edible'].map(item => <option key={item}>{item}</option>)}</select>
+        <select value={form.nativeStatus} onChange={event => setForm({ ...form, nativeStatus: event.target.value })}>{['Not specified', 'Native', 'Non-native', 'Cultivar'].map(item => <option key={item}>{item}</option>)}</select>
+        <input placeholder="Pollinator value" value={form.pollinatorValue} onChange={event => setForm({ ...form, pollinatorValue: event.target.value })} />
+        <input placeholder="Deer resistance" value={form.deerResistance} onChange={event => setForm({ ...form, deerResistance: event.target.value })} />
+        <input placeholder="Companion plants" value={form.companionPlants} onChange={event => setForm({ ...form, companionPlants: event.target.value })} />
+        <input placeholder="Supplier" value={form.supplier} onChange={event => setForm({ ...form, supplier: event.target.value })} />
+        <input type="number" min="0" step="0.01" placeholder="Supplier cost" value={form.supplierCost} onChange={event => setForm({ ...form, supplierCost: event.target.value })} />
+        <input type="number" min="0" step="0.01" placeholder="Customer price" value={form.customerPrice} onChange={event => setForm({ ...form, customerPrice: event.target.value })} />
+        <textarea placeholder="Toxicity notes" value={form.toxicityNotes} onChange={event => setForm({ ...form, toxicityNotes: event.target.value })} />
+        <textarea placeholder="Pet safety notes" value={form.petSafetyNotes} onChange={event => setForm({ ...form, petSafetyNotes: event.target.value })} />
+        <textarea placeholder="Maintenance notes" value={form.maintenanceNotes} onChange={event => setForm({ ...form, maintenanceNotes: event.target.value })} />
+        <textarea placeholder="Pruning notes" value={form.pruningNotes} onChange={event => setForm({ ...form, pruningNotes: event.target.value })} />
+        <textarea placeholder="Installation notes" value={form.installationNotes} onChange={event => setForm({ ...form, installationNotes: event.target.value })} />
+        <input placeholder="Tags, comma separated" value={form.tags.join(', ')} onChange={event => setForm({ ...form, tags: event.target.value.split(',').map(item => item.trim()).filter(Boolean) })} />
+      </div><p>User-entered information is labeled separately from built-in reference content. Verify site-specific plant facts before promising performance.</p></details>
       <button className="primary">Save approved plant</button>
     </form>}
     {sourcing.length > 0 && <section className="panel glass design-sourcing-ribbon"><div><span>Connected project records</span><h3>Plant Sourcing selections</h3></div><div>{sourcing.map(record => {
@@ -1071,10 +1122,11 @@ function PlantPalette({ data, setData, projectId }) {
       const nursery = data.nurseries.find(item => (item.nurseryId || item.id) === plant.nurseryId);
       return <article className="design-plant-card glass" key={plant.plantId}>
         <button className="design-favorite" aria-label={plant.favorite ? 'Remove favorite' : 'Add favorite'} onClick={() => patchPlant(plant.plantId, { favorite: !plant.favorite })}>{plant.favorite ? '★' : '☆'}</button>
-        <span>{plant.category} • {plant.light}</span><h3>{plant.commonName}</h3><em>{plant.scientificName || 'Scientific name not added'}</em>
+        <span>{plant.category} • {plant.light} • {plant.informationSource || 'User-entered information'}</span><h3>{plant.commonName}</h3><em>{plant.botanicalName || plant.scientificName || 'Botanical name not added'}</em>
         <div className="design-tag-row">{(plant.traits || []).map(trait => <small key={trait}>{trait}</small>)}</div>
-        <p>{plant.notes || 'Ready for a project palette.'}</p><small>{nursery ? `Source: ${nursery.name}` : 'No nursery linked'}</small>
-        <div><button onClick={() => addToConcept(plant)} disabled={!conceptId}>Add to concept</button><button onClick={() => patchPlant(plant.plantId, { archived: true })}>Archive</button></div>
+        <dl className="plant-intelligence-facts"><div><dt>Zones</dt><dd>{plant.zones || '—'}</dd></div><div><dt>Size</dt><dd>{[plant.matureHeight, plant.matureWidth].filter(Boolean).join(' × ') || '—'}</dd></div><div><dt>Water</dt><dd>{plant.waterNeeds || '—'}</dd></div><div><dt>Bloom / fruit</dt><dd>{plant.bloomSeason || plant.fruitSeason || '—'}</dd></div></dl>
+        <p>{plant.notes || plant.maintenanceNotes || 'Ready for a project palette.'}</p><small>{nursery ? `Source: ${nursery.name}` : plant.supplier ? `Source: ${plant.supplier}` : 'No nursery linked'}</small>
+        <div><button onClick={() => addToConcept(plant)} disabled={!conceptId}>Add to concept</button><button onClick={() => addPlantToSourcing(plant)}>Add to sourcing</button><button onClick={() => addPlantToEstimate(plant)}>Add to estimate</button><button onClick={() => patchPlant(plant.plantId, { archived: true })}>Archive</button></div>
       </article>;
     })}{!plants.length && <EmptyStudio title="No approved plants match" text="Add a plant with useful light, category, and design traits or adjust the search." />}</section>
   </div>;

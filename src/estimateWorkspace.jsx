@@ -1,0 +1,207 @@
+import React, { useEffect, useMemo, useState } from 'react';
+import './estimateWorkspace.css';
+import {
+  ESTIMATE_LINE_CATEGORIES,
+  ESTIMATE_STATUSES,
+  INVOICE_STATUSES,
+  SERVICE_CATEGORIES,
+  calculateEstimateTotals,
+  convertLeadToBusiness,
+  migrateServices,
+  nextEstimateNumber,
+  normalizeEstimateLine,
+} from './growthEngine.js';
+import { addTimelineEvent } from './projectEngine.js';
+import { localDate } from './calendarEngine.js';
+import { createCalendarEvent } from './calendarEngine.js';
+
+const uid = prefix => `${prefix}-${crypto.randomUUID()}`;
+const now = () => new Date().toISOString();
+const number = value => Number(value || 0);
+const money = value => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(number(value));
+const dateLabel = value => value ? new Date(`${String(value).slice(0, 10)}T12:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) : 'Not scheduled';
+const active = item => !item.archived;
+const escapeHtml = value => String(value || '').replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' }[character]));
+const documentNumber = document => document.documentType === 'Invoice' ? document.invoiceNumber : document.estimateNumber;
+
+function addDays(value, amount) {
+  const date = new Date(`${value}T12:00:00`);
+  date.setDate(date.getDate() + amount);
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+}
+
+function newLine(values = {}) {
+  return normalizeEstimateLine({ id: uid('estimate-line'), description: '', category: 'Other', quantity: 1, unit: 'each', cost: '', markup: '', customerPrice: '', taxable: true, notes: '', ...values });
+}
+
+function blankDocument(data, leadId = '') {
+  const lead = data.leads.find(item => item.leadId === leadId);
+  const date = localDate();
+  return {
+    id: '', documentType: 'Estimate', estimateId: '', invoiceId: '', estimateNumber: nextEstimateNumber(data.estimates, date), invoiceNumber: '',
+    leadId, clientId: lead?.clientId || '', projectId: lead?.projectId || '', client: lead?.fullName || lead?.organizationName || '',
+    title: lead?.serviceRequested ? `${lead.serviceRequested} Proposal` : 'Landscape Design Proposal', creationDate: date, date,
+    expirationDate: addDays(date, 30), dueDate: '', serviceAddress: lead?.serviceAddress || '', scopeOfWork: lead?.serviceRequested || '',
+    notes: '', terms: 'Pricing is valid through the expiration date. Scheduling begins after written acceptance and the required deposit.',
+    depositPercent: '30', discountAmount: '', taxRate: data.business.defaultTax || '', status: 'Draft', lines: [newLine()], revisionOf: '', templateId: '',
+  };
+}
+
+function printDocument(document, business) {
+  const win = window.open('', '_blank');
+  if (!win) { alert('The printable document was blocked. Allow pop-ups and try again.'); return; }
+  const rows = document.lines.map(line => `<tr><td><strong>${escapeHtml(line.description)}</strong>${line.notes ? `<small>${escapeHtml(line.notes)}</small>` : ''}</td><td>${escapeHtml(line.quantity)} ${escapeHtml(line.unit)}</td><td>${escapeHtml(money(line.customerPrice))}</td><td>${escapeHtml(money(number(line.quantity) * number(line.customerPrice)))}</td></tr>`).join('');
+  win.document.write(`<html><head><title>${escapeHtml(document.estimateNumber || document.invoiceNumber || document.title)}</title><style>body{font-family:Georgia,serif;padding:48px;color:#263127;max-width:940px;margin:auto}header{display:flex;justify-content:space-between;gap:30px;border-bottom:2px solid #b39154;padding-bottom:20px}h1,h2{color:#52684f}.meta{text-align:right}.meta span,.meta strong{display:block}table{width:100%;border-collapse:collapse;margin-top:28px}td,th{padding:12px;border-bottom:1px solid #ddd;text-align:left}td small{display:block;color:#666}.summary{margin-left:auto;width:min(360px,100%);padding-top:20px}.summary p{display:flex;justify-content:space-between}.summary h3{display:flex;justify-content:space-between;border-top:2px solid #52684f;padding-top:12px}.scope,.terms{white-space:pre-wrap;line-height:1.55}.signature{display:grid;grid-template-columns:1fr 1fr;gap:40px;margin-top:55px}.signature div{border-top:1px solid #333;padding-top:7px}@media print{button{display:none}}@media(max-width:600px){body{padding:20px}header{flex-direction:column}.meta{text-align:left}.signature{grid-template-columns:1fr}}</style></head><body><header><div><h1>${escapeHtml(business.name)}</h1><p>${escapeHtml(business.tagline)}</p><p>${escapeHtml(business.phone)} ${escapeHtml(business.email)}</p></div><div class="meta"><span>${escapeHtml(document.documentType)}</span><strong>${escapeHtml(document.estimateNumber || document.invoiceNumber)}</strong><span>${escapeHtml(dateLabel(document.creationDate))}</span><span>${document.documentType === 'Estimate' ? `Expires ${escapeHtml(dateLabel(document.expirationDate))}` : `Due ${escapeHtml(dateLabel(document.dueDate))}`}</span></div></header><h2>${escapeHtml(document.title)}</h2><p><strong>Prepared for:</strong> ${escapeHtml(document.client)}<br><strong>Service address:</strong> ${escapeHtml(document.serviceAddress)}</p><h3>Scope of work</h3><p class="scope">${escapeHtml(document.scopeOfWork)}</p><table><thead><tr><th>Description</th><th>Quantity</th><th>Unit price</th><th>Amount</th></tr></thead><tbody>${rows}</tbody></table><div class="summary"><p><span>Subtotal</span><strong>${escapeHtml(money(document.subtotal))}</strong></p>${number(document.discountAmount) ? `<p><span>Discount</span><strong>−${escapeHtml(money(document.discountAmount))}</strong></p>` : ''}<p><span>Tax</span><strong>${escapeHtml(money(document.tax))}</strong></p><h3><span>Total</span><strong>${escapeHtml(money(document.total))}</strong></h3>${number(document.depositDue) ? `<p><span>Deposit due</span><strong>${escapeHtml(money(document.depositDue))}</strong></p>` : ''}</div>${document.notes ? `<h3>Notes</h3><p class="scope">${escapeHtml(document.notes)}</p>` : ''}<h3>Terms</h3><p class="terms">${escapeHtml(document.terms)}</p>${document.documentType === 'Estimate' ? '<div class="signature"><div>Client approval / date</div><div>Tierra Fleur Designs / date</div></div>' : ''}<button onclick="window.print()">Print / Save PDF</button></body></html>`);
+  win.document.close();
+}
+
+async function shareDocument(document, business) {
+  const safeName = `${documentNumber(document) || document.title}`.replace(/[^a-z0-9-]+/gi, '-');
+  const text = `${business.name}\n${document.documentType} ${documentNumber(document)}\n${document.title}\nClient: ${document.client}\nTotal: ${money(document.total)}\nStatus: ${document.status}`;
+  const file = new File([text], `${safeName}.txt`, { type: 'text/plain' });
+  try {
+    if (navigator.share && (!navigator.canShare || navigator.canShare({ files: [file] }))) await navigator.share({ title: document.title, text, files: [file] });
+    else {
+      const link = globalThis.document?.createElement('a');
+      if (!link) throw new Error('Export is unavailable.');
+      link.href = URL.createObjectURL(file); link.download = file.name; link.click(); URL.revokeObjectURL(link.href);
+    }
+  } catch (error) {
+    if (error?.name !== 'AbortError') alert('This device could not open its share sheet. Use Print / PDF to export the document instead.');
+  }
+}
+
+function SectionTitle({ eyebrow, title, text, action }) { return <div className="estimate-section-title"><div><span>{eyebrow}</span><h2>{title}</h2>{text && <p>{text}</p>}</div>{action}</div>; }
+
+function LineEditor({ line, patch, remove, canRemove }) {
+  return <article className="estimate-line-editor"><div className="estimate-line-heading"><select aria-label="Line item category" value={line.category} onChange={event => patch({ category: event.target.value })}>{ESTIMATE_LINE_CATEGORIES.map(item => <option key={item}>{item}</option>)}</select>{canRemove && <button type="button" className="danger" onClick={remove}>Remove</button>}</div><input className="line-description" placeholder="Description" value={line.description} onChange={event => patch({ description: event.target.value })} /><div className="estimate-line-numbers"><label>Quantity<input type="number" min="0" step="0.01" value={line.quantity} onChange={event => patch({ quantity: event.target.value, qty: event.target.value })} /></label><label>Unit<input value={line.unit} onChange={event => patch({ unit: event.target.value })} /></label><label>Internal cost<input type="number" min="0" step="0.01" value={line.cost} onChange={event => { const cost = event.target.value; const customerPrice = number(cost) * (1 + number(line.markup) / 100); patch({ cost, ...(line.customerPrice === '' || line.autoPrice ? { customerPrice, price: customerPrice, autoPrice: true } : {}) }); }} /></label><label>Markup %<input type="number" min="0" step="0.01" value={line.markup} onChange={event => { const markup = event.target.value; const customerPrice = number(line.cost) * (1 + number(markup) / 100); patch({ markup, ...(line.autoPrice || line.customerPrice === '' ? { customerPrice, price: customerPrice, autoPrice: true } : {}) }); }} /></label><label>Customer price<input type="number" min="0" step="0.01" value={line.customerPrice} onChange={event => patch({ customerPrice: event.target.value, price: event.target.value, autoPrice: false })} /></label><label className="taxable"><input type="checkbox" checked={line.taxable} onChange={event => patch({ taxable: event.target.checked })} /> Taxable</label></div><textarea placeholder="Line-item notes" value={line.notes} onChange={event => patch({ notes: event.target.value })} /><strong className="line-total">{money(number(line.quantity) * number(line.customerPrice))}</strong></article>;
+}
+
+function createProjectFromDocument(data, document) {
+  const year = String(document.creationDate || localDate()).slice(0, 4);
+  const used = new Set(data.projects.map(item => item.projectId));
+  let sequence = 1;
+  while (used.has(`TFD-${year}-${String(sequence).padStart(3, '0')}`)) sequence += 1;
+  const projectId = `TFD-${year}-${String(sequence).padStart(3, '0')}`;
+  const project = { id: uid('project'), projectId, clientId: document.clientId, leadId: document.leadId, estimateId: document.estimateId, name: document.title.replace(/\s*(proposal|estimate)$/i, '') || 'Landscape project', propertyAddress: document.serviceAddress, startDate: '', targetCompletionDate: '', notes: document.scopeOfWork, status: 'Approved', healthStatus: 'On Track', budget: document.total, profitPlan: { laborHours: '', laborRate: '', mileage: '', mileageRate: '', desiredMargin: '30' }, createdAt: now(), updatedAt: now(), archived: false };
+  return { ...data, projects: [project, ...data.projects], estimates: data.estimates.map(item => item.id === document.id ? { ...item, projectId, status: 'Converted to Project', updatedAt: now() } : item) };
+}
+
+export function EstimateWorkspace({ data, setData, initialLeadId = '', initialDocumentId = '', clearRequest = () => {}, openProject }) {
+  const [draft, setDraft] = useState(() => blankDocument(data, initialLeadId));
+  const [serviceId, setServiceId] = useState('');
+  const [filter, setFilter] = useState('All');
+  const [search, setSearch] = useState('');
+  const [message, setMessage] = useState('');
+  const [paymentDraft, setPaymentDraft] = useState(null);
+  const totals = useMemo(() => calculateEstimateTotals(draft.lines, { discountAmount: draft.discountAmount, taxRate: draft.taxRate, depositPercent: draft.depositPercent, paymentsReceived: draft.paymentsReceived }), [draft.lines, draft.discountAmount, draft.taxRate, draft.depositPercent, draft.paymentsReceived]);
+  const documents = data.estimates.filter(item => !item.archived && (filter === 'All' || item.documentType === filter) && `${item.title} ${item.client} ${item.estimateNumber} ${item.invoiceNumber} ${item.status}`.toLowerCase().includes(search.toLowerCase()));
+
+  useEffect(() => {
+    if (initialDocumentId) { const found = data.estimates.find(item => [item.id, item.estimateId, item.invoiceId].includes(initialDocumentId)); if (found) setDraft({ ...found, lines: found.lines.map(normalizeEstimateLine) }); clearRequest(); }
+    else if (initialLeadId) { setDraft(blankDocument(data, initialLeadId)); clearRequest(); }
+  }, [initialLeadId, initialDocumentId]);
+
+  const set = changes => setDraft(current => ({ ...current, ...changes }));
+  const patchLine = (id, changes) => set({ lines: draft.lines.map(item => item.id === id ? { ...item, ...changes } : item) });
+  const selectLead = leadId => {
+    const lead = data.leads.find(item => item.leadId === leadId);
+    set({ leadId, clientId: lead?.clientId || draft.clientId, projectId: lead?.projectId || draft.projectId, client: lead?.fullName || lead?.organizationName || draft.client, serviceAddress: lead?.serviceAddress || draft.serviceAddress, scopeOfWork: draft.scopeOfWork || lead?.serviceRequested || '', title: draft.title === 'Landscape Design Proposal' && lead?.serviceRequested ? `${lead.serviceRequested} Proposal` : draft.title });
+  };
+  const selectClient = clientId => { const client = data.clients.find(item => item.clientId === clientId); set({ clientId, client: client?.name || '', serviceAddress: draft.serviceAddress || client?.address || '' }); };
+  const selectProject = projectId => { const project = data.projects.find(item => item.projectId === projectId); set({ projectId, clientId: draft.clientId || project?.clientId || '', serviceAddress: draft.serviceAddress || project?.propertyAddress || '', title: draft.title || project?.name || '' }); };
+  const changeType = documentType => { const date = draft.creationDate || localDate(); set({ documentType, status: 'Draft', estimateNumber: documentType === 'Estimate' ? (draft.estimateNumber || nextEstimateNumber(data.estimates, date, 'Estimate')) : '', invoiceNumber: documentType === 'Invoice' ? (draft.invoiceNumber || nextEstimateNumber(data.estimates, date, 'Invoice')) : '', dueDate: documentType === 'Invoice' ? (draft.dueDate || addDays(date, 14)) : '' }); };
+  const insertService = () => {
+    const service = data.services.find(item => (item.serviceId || item.id) === serviceId);
+    if (!service) return;
+    set({ lines: [...draft.lines, newLine({ category: /consult/i.test(service.category) ? 'Consultation' : /design/i.test(service.category) ? 'Design fee' : 'Other', description: service.customerDescription || service.description || service.name, unit: service.pricingMethod || service.unit || 'project', customerPrice: service.startingPrice ?? service.price ?? 0, price: service.startingPrice ?? service.price ?? 0, cost: '', notes: service.defaultMaterials ? `Default materials: ${service.defaultMaterials}` : '' })] });
+    setServiceId('');
+  };
+  const save = () => {
+    if (!draft.client.trim() || !draft.lines.some(item => item.description.trim())) { setMessage('Add a lead or client and at least one described line item.'); return; }
+    const id = draft.id || uid(draft.documentType === 'Invoice' ? 'invoice' : 'estimate');
+    const record = { ...draft, id, estimateId: draft.documentType === 'Estimate' ? (draft.estimateId || id) : '', invoiceId: draft.documentType === 'Invoice' ? (draft.invoiceId || id) : '', estimateNumber: draft.documentType === 'Estimate' ? (draft.estimateNumber || nextEstimateNumber(data.estimates, draft.creationDate, 'Estimate')) : '', invoiceNumber: draft.documentType === 'Invoice' ? (draft.invoiceNumber || nextEstimateNumber(data.estimates, draft.creationDate, 'Invoice')) : '', date: draft.creationDate, lines: draft.lines.map(normalizeEstimateLine), lineItems: draft.lines.map(normalizeEstimateLine), ...totals, archived: false, createdAt: draft.createdAt || now(), updatedAt: now() };
+    setData(current => {
+      let next = { ...current, estimates: draft.id ? current.estimates.map(item => item.id === draft.id ? record : item) : [record, ...current.estimates] };
+      if (record.projectId) next = addTimelineEvent(next, { projectId: record.projectId, eventType: record.documentType === 'Invoice' ? 'invoice.created' : record.status === 'Accepted' ? 'estimate.approved' : 'estimate.created', title: record.documentType === 'Invoice' ? 'Invoice saved' : record.status === 'Accepted' ? 'Estimate accepted' : 'Estimate saved', description: `${record.title} · ${money(record.total)}`, relatedRecordId: record.invoiceId || record.estimateId, dedupeKey: `document.saved:${record.id}:${record.status}`, automatic: true });
+      if (record.leadId) next.leads = next.leads.map(item => item.leadId === record.leadId ? { ...item, currentStage: record.status === 'Accepted' ? 'Booked' : ['Sent', 'Viewed'].includes(record.status) ? 'Estimate Sent' : 'Estimate in Progress', updatedAt: now(), ...(record.status === 'Accepted' ? { bookedAt: now() } : {}) } : item);
+      const deadlineDate = record.documentType === 'Invoice' ? record.dueDate : record.expirationDate;
+      if (deadlineDate) {
+        const relatedRecordId = record.invoiceId || record.estimateId || record.id;
+        const eventType = record.documentType === 'Invoice' ? 'Payment Due' : 'Estimate Deadline';
+        const existing = next.calendarEvents.find(item => item.relatedRecordId === relatedRecordId && item.eventType === eventType && !item.archived);
+        next.calendarEvents = existing
+          ? next.calendarEvents.map(item => item.calendarEventId === existing.calendarEventId ? { ...item, title: `${eventType} · ${record.client}`, date: deadlineDate, endDate: deadlineDate, clientId: record.clientId, projectId: record.projectId, updatedAt: now() } : item)
+          : [...next.calendarEvents, createCalendarEvent({ title: `${eventType} · ${record.client}`, description: record.title, eventType, group: 'tierra', date: deadlineDate, endDate: deadlineDate, startTime: '09:00', endTime: '09:30', leadId: record.leadId, clientId: record.clientId, projectId: record.projectId, estimateId: record.estimateId, invoiceId: record.invoiceId, relatedRecordId })];
+      }
+      return next;
+    });
+    setDraft(record); setMessage(`${record.documentType} saved.`);
+  };
+  const duplicate = (document, revision = false) => {
+    const date = localDate(); const id = uid(document.documentType === 'Invoice' ? 'invoice' : 'estimate');
+    const copy = { ...document, id, estimateId: document.documentType === 'Estimate' ? id : '', invoiceId: document.documentType === 'Invoice' ? id : '', estimateNumber: document.documentType === 'Estimate' ? nextEstimateNumber(data.estimates, date, 'Estimate') : '', invoiceNumber: document.documentType === 'Invoice' ? nextEstimateNumber(data.estimates, date, 'Invoice') : '', title: revision ? `${document.title} · Revision` : `Copy of ${document.title}`, status: 'Draft', revisionOf: revision ? (document.estimateId || document.id) : '', creationDate: date, date, createdAt: now(), updatedAt: now() };
+    setData(current => ({ ...current, estimates: [copy, ...current.estimates] })); setDraft(copy); window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+  const convertToInvoice = document => {
+    const date = localDate(); const id = uid('invoice');
+    const invoice = { ...document, id, documentType: 'Invoice', estimateId: document.estimateId || document.id, sourceEstimateId: document.estimateId || document.id, invoiceId: id, estimateNumber: '', invoiceNumber: nextEstimateNumber(data.estimates, date, 'Invoice'), creationDate: date, date, dueDate: addDays(date, 14), expirationDate: '', status: number(document.depositDue) ? 'Deposit Due' : 'Sent', title: document.title.replace(/proposal|estimate/i, 'Invoice'), paymentsReceived: 0, balanceDue: document.total, createdAt: now(), updatedAt: now() };
+    setData(current => ({ ...current, estimates: [invoice, ...current.estimates] })); setDraft(invoice); window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+  const convertToProject = document => {
+    let next = data;
+    if (document.leadId) next = convertLeadToBusiness(next, document.leadId, { clientId: document.clientId, createClient: !document.clientId, createProject: true, projectName: document.title.replace(/\s*(proposal|estimate)$/i, '') });
+    else if (document.clientId && !document.projectId) next = createProjectFromDocument(next, document);
+    else if (!document.projectId) { alert('Link a lead or client before creating a project.'); return; }
+    const lead = next.leads.find(item => item.leadId === document.leadId);
+    const projectId = document.projectId || lead?.projectId || next.projects[0]?.projectId;
+    next = { ...next, estimates: next.estimates.map(item => item.id === document.id ? { ...item, projectId, status: 'Converted to Project', updatedAt: now() } : item) };
+    setData(next); if (projectId) openProject(projectId);
+  };
+  const recordDeposit = document => {
+    const suggested = Math.max(0, number(document.depositDue) - number(document.paymentsReceived));
+    setPaymentDraft({ document, amount: suggested.toFixed(2), type: suggested > 0 ? 'Deposit' : 'Client Payment', date: localDate(), paymentMethod: 'Not specified', notes: `Payment for ${document.title}` });
+  };
+  const commitPayment = event => {
+    event.preventDefault();
+    const document = paymentDraft?.document;
+    const amount = number(paymentDraft?.amount);
+    if (!document || amount <= 0) return;
+    const transactionId = uid('txn-business');
+    setData(current => {
+      let next = { ...current, businessTransactions: [{ id: transactionId, transactionId, type: paymentDraft.type, taxCategory: 'Client Revenue', amount, date: paymentDraft.date, dueDate: '', status: 'Paid', paymentMethod: paymentDraft.paymentMethod, clientId: document.clientId, projectId: document.projectId, estimateId: document.estimateId, invoiceId: document.invoiceId, relatedRecordId: document.invoiceId || document.estimateId, notes: paymentDraft.notes, archived: false }, ...current.businessTransactions], estimates: current.estimates.map(item => item.id === document.id ? { ...item, paymentsReceived: number(item.paymentsReceived) + amount, balanceDue: Math.max(0, number(item.total) - number(item.paymentsReceived) - amount), status: number(item.total) - number(item.paymentsReceived) - amount <= 0 ? 'Paid' : 'Partially Paid', updatedAt: now() } : item) };
+      if (document.projectId) next = addTimelineEvent(next, { projectId: document.projectId, eventType: 'payment.recorded', title: `${paymentDraft.type} recorded`, description: `${money(amount)} · ${document.title}`, relatedRecordId: transactionId, dedupeKey: `payment.recorded:${transactionId}`, automatic: true });
+      return next;
+    });
+    if (draft.id === document.id) setDraft(current => ({ ...current, paymentsReceived: number(current.paymentsReceived) + amount, balanceDue: Math.max(0, number(current.total) - number(current.paymentsReceived) - amount), status: number(current.total) - number(current.paymentsReceived) - amount <= 0 ? 'Paid' : 'Partially Paid', updatedAt: now() }));
+    setPaymentDraft(null);
+    setMessage(`${paymentDraft.type} recorded.`);
+  };
+  const saveTemplate = document => { const templateId = uid('estimate-template'); setData(current => ({ ...current, estimateTemplates: [{ id: templateId, templateId, name: document.title, scopeOfWork: document.scopeOfWork, terms: document.terms, depositPercent: document.depositPercent, taxRate: document.taxRate, lines: document.lines, createdAt: now(), archived: false }, ...current.estimateTemplates] })); };
+  const startNew = () => { setDraft(blankDocument(data)); setMessage(''); window.scrollTo({ top: 0, behavior: 'smooth' }); };
+  return <div className="page estimate-workspace"><SectionTitle eyebrow="Professional sales documents" title="Estimates & Invoices" text="Build, revise, accept, convert, print, and share branded project documents." action={<button className="primary" onClick={startNew}>New estimate</button>} />
+    <div className="estimate-layout"><section className="estimate-builder panel glass"><div className="estimate-builder-heading"><div><span>{draft.documentType}</span><h3>{draft.estimateNumber || draft.invoiceNumber || 'New document'}</h3></div><select value={draft.documentType} onChange={event => changeType(event.target.value)}><option>Estimate</option><option>Invoice</option></select></div>
+      <div className="estimate-form-grid"><label>Lead<select value={draft.leadId} onChange={event => selectLead(event.target.value)}><option value="">Not linked</option>{data.leads.filter(active).map(item => <option key={item.leadId} value={item.leadId}>{item.fullName || item.organizationName}</option>)}</select></label><label>Client<select value={draft.clientId} onChange={event => selectClient(event.target.value)}><option value="">Select client</option>{data.clients.filter(active).map(item => <option key={item.clientId} value={item.clientId}>{item.name}</option>)}</select></label><label>Project<select value={draft.projectId} onChange={event => selectProject(event.target.value)}><option value="">Optional project</option>{data.projects.filter(active).map(item => <option key={item.projectId} value={item.projectId}>{item.projectId} · {item.name}</option>)}</select></label><label>Status<select value={draft.status} onChange={event => set({ status: event.target.value })}>{[...(draft.documentType === 'Invoice' ? INVOICE_STATUSES : ESTIMATE_STATUSES), 'Approved', 'Deposit Paid'].filter((item, index, array) => array.indexOf(item) === index).map(item => <option key={item}>{item}</option>)}</select></label><label className="wide">Document title<input value={draft.title} onChange={event => set({ title: event.target.value })} /></label><label>Created<input type="date" value={draft.creationDate} onChange={event => set({ creationDate: event.target.value, date: event.target.value })} /></label>{draft.documentType === 'Estimate' ? <label>Expires<input type="date" value={draft.expirationDate} onChange={event => set({ expirationDate: event.target.value })} /></label> : <label>Payment due<input type="date" value={draft.dueDate} onChange={event => set({ dueDate: event.target.value })} /></label>}<label className="wide">Prepared for<input value={draft.client} onChange={event => set({ client: event.target.value })} /></label><label className="wide">Service address<input value={draft.serviceAddress} onChange={event => set({ serviceAddress: event.target.value })} /></label><label className="wide">Scope of work<textarea value={draft.scopeOfWork} onChange={event => set({ scopeOfWork: event.target.value })} /></label></div>
+      <div className="service-insert"><select value={serviceId} onChange={event => setServiceId(event.target.value)}><option value="">Insert from Services District</option>{data.services.filter(item => item.active !== false && !item.archived).map(item => <option key={item.serviceId || item.id} value={item.serviceId || item.id}>{item.name} · {money(item.startingPrice ?? item.price)}</option>)}</select><button onClick={insertService} disabled={!serviceId}>Insert service</button></div>
+      <div className="estimate-lines">{draft.lines.map(line => <LineEditor key={line.id} line={line} patch={changes => patchLine(line.id, changes)} remove={() => set({ lines: draft.lines.filter(item => item.id !== line.id) })} canRemove={draft.lines.length > 1} />)}</div><button className="add-estimate-line" onClick={() => set({ lines: [...draft.lines, newLine()] })}>＋ Add line item</button>
+      <div className="estimate-options"><label>Discount<input type="number" min="0" step="0.01" value={draft.discountAmount} onChange={event => set({ discountAmount: event.target.value })} /></label><label>Tax rate %<input type="number" min="0" step="0.01" value={draft.taxRate} onChange={event => set({ taxRate: event.target.value })} /></label><label>Deposit %<input type="number" min="0" max="100" step="0.01" value={draft.depositPercent} onChange={event => set({ depositPercent: event.target.value })} /></label></div><div className="estimate-form-grid"><label className="wide">Notes<textarea value={draft.notes} onChange={event => set({ notes: event.target.value })} /></label><label className="wide">Terms<textarea value={draft.terms} onChange={event => set({ terms: event.target.value })} /></label></div>
+      {message && <p className="estimate-message" role="status">{message}</p>}<div className="estimate-save-row"><button onClick={startNew}>Cancel / clear</button><button className="primary" onClick={save}>Save {draft.documentType.toLowerCase()}</button></div>
+    </section><aside className="estimate-summary panel glass"><span>Live calculation</span><h3>{money(totals.total)}</h3><dl><div><dt>Subtotal</dt><dd>{money(totals.subtotal)}</dd></div><div><dt>Estimated cost</dt><dd>{money(totals.estimatedCost)}</dd></div><div><dt>Discount</dt><dd>−{money(totals.discountAmount)}</dd></div><div><dt>Tax</dt><dd>{money(totals.tax)}</dd></div><div><dt>Estimated profit</dt><dd>{money(totals.estimatedProfit)}</dd></div><div><dt>Deposit due</dt><dd>{money(totals.depositDue)}</dd></div><div><dt>Balance</dt><dd>{money(totals.balanceDue)}</dd></div></dl><p>Customer prices, tax, deposit, and estimated profit update as line items change.</p></aside></div>
+    <section className="saved-documents panel glass"><SectionTitle eyebrow="Saved business documents" title="Estimates, proposals, and invoices" action={<div className="document-filters"><input type="search" placeholder="Search documents" value={search} onChange={event => setSearch(event.target.value)} /><select value={filter} onChange={event => setFilter(event.target.value)}><option>All</option><option>Estimate</option><option>Invoice</option></select></div>} /><div className="document-list">{documents.map(document => <article key={document.id}><header><div><span>{document.documentType} · {document.status}</span><h3>{document.title}</h3><p>{documentNumber(document)} · {document.client}</p></div><strong>{money(document.total)}</strong></header><div className="document-facts"><span>Created<b>{dateLabel(document.creationDate || document.date)}</b></span><span>{document.documentType === 'Invoice' ? 'Due' : 'Expires'}<b>{dateLabel(document.dueDate || document.expirationDate)}</b></span><span>Deposit<b>{money(document.depositDue)}</b></span><span>Balance<b>{money(document.balanceDue ?? (number(document.total) - number(document.paymentsReceived)))}</b></span></div><div className="document-actions"><button onClick={() => { setDraft({ ...document, lines: document.lines.map(normalizeEstimateLine) }); window.scrollTo({ top: 0, behavior: 'smooth' }); }}>Edit</button><button onClick={() => duplicate(document)}>Duplicate</button>{document.documentType === 'Estimate' && <button onClick={() => duplicate(document, true)}>Revise</button>}<button onClick={() => printDocument(document, data.business)}>Print / PDF</button><button onClick={() => shareDocument(document, data.business)}>Share / export</button><button onClick={() => saveTemplate(document)}>Save template</button>{document.documentType === 'Estimate' && ['Accepted', 'Approved'].includes(document.status) && <><button className="primary" onClick={() => convertToProject(document)}>Create project</button><button className="primary" onClick={() => convertToInvoice(document)}>Create invoice</button></>}{document.documentType === 'Invoice' && document.status !== 'Paid' && <button className="primary" onClick={() => recordDeposit(document)}>Record payment / deposit</button>}<button onClick={() => setData(current => ({ ...current, estimates: current.estimates.map(item => item.id === document.id ? { ...item, archived: true } : item) }))}>Archive</button><button className="danger" onClick={() => confirm(`Delete this ${document.documentType.toLowerCase()}?`) && setData(current => ({ ...current, estimates: current.estimates.filter(item => item.id !== document.id) }))}>Delete</button></div></article>)}{!documents.length && <p className="estimate-empty">No saved documents match this view.</p>}</div></section>
+    {paymentDraft && <div className="estimate-modal-backdrop" role="presentation"><section className="estimate-payment-modal" role="dialog" aria-modal="true" aria-labelledby="payment-dialog-title"><header><div><span>Connected finance entry</span><h2 id="payment-dialog-title">Record payment or deposit</h2><p>{paymentDraft.document.title}</p></div><button type="button" aria-label="Close payment form" onClick={() => setPaymentDraft(null)}>×</button></header><form onSubmit={commitPayment}><label>Entry type<select aria-label="Payment entry type" value={paymentDraft.type} onChange={event => setPaymentDraft(current => ({ ...current, type: event.target.value }))}><option>Deposit</option><option>Client Payment</option></select></label><label>Amount received<input required aria-label="Payment amount" type="number" min="0.01" step="0.01" value={paymentDraft.amount} onChange={event => setPaymentDraft(current => ({ ...current, amount: event.target.value }))} /></label><label>Date received<input required aria-label="Payment date" type="date" value={paymentDraft.date} onChange={event => setPaymentDraft(current => ({ ...current, date: event.target.value }))} /></label><label>Payment method<select aria-label="Payment method" value={paymentDraft.paymentMethod} onChange={event => setPaymentDraft(current => ({ ...current, paymentMethod: event.target.value }))}>{['Not specified', 'Cash', 'Check', 'Credit card', 'Bank transfer', 'Other'].map(item => <option key={item}>{item}</option>)}</select></label><label className="wide">Notes<textarea aria-label="Payment notes" value={paymentDraft.notes} onChange={event => setPaymentDraft(current => ({ ...current, notes: event.target.value }))} /></label><footer><button type="button" onClick={() => setPaymentDraft(null)}>Cancel</button><button className="primary">Record payment</button></footer></form></section></div>}
+  </div>;
+}
+
+const blankService = { name: '', category: SERVICE_CATEGORIES[0], description: '', startingPrice: '', priceRange: '', pricingMethod: 'project', estimatedLaborHours: '', defaultMaterials: '', suggestedDeposit: '30', internalCostNotes: '', customerDescription: '', active: true };
+
+export function ServiceLibrary({ data, setData }) {
+  const [form, setForm] = useState(blankService);
+  const [editingId, setEditingId] = useState('');
+  const [search, setSearch] = useState('');
+  const [showInactive, setShowInactive] = useState(false);
+  const services = data.services.filter(item => (showInactive ? item.active === false || item.archived : item.active !== false && !item.archived) && `${item.name} ${item.category} ${item.description} ${item.customerDescription}`.toLowerCase().includes(search.toLowerCase()));
+  const set = changes => setForm(current => ({ ...current, ...changes }));
+  const save = event => { event.preventDefault(); if (!form.name.trim()) return; const id = editingId || uid('service'); const record = migrateServices([{ ...form, id, serviceId: id, price: form.startingPrice, unit: form.pricingMethod, updatedAt: now(), createdAt: form.createdAt || now(), archived: false }])[0]; setData(current => ({ ...current, services: editingId ? current.services.map(item => (item.serviceId || item.id) === editingId ? record : item) : [record, ...current.services] })); setForm(blankService); setEditingId(''); };
+  const edit = item => { setEditingId(item.serviceId || item.id); setForm({ ...blankService, ...item, startingPrice: item.startingPrice ?? item.price ?? '', pricingMethod: item.pricingMethod || item.unit || 'project' }); window.scrollTo({ top: 0, behavior: 'smooth' }); };
+  return <div className="page service-library"><SectionTitle eyebrow="Connected price book" title="Services District" text="Reusable service details flow directly into estimates without retyping." /><div className="service-library-layout"><form className="panel glass service-editor" onSubmit={save}><h3>{editingId ? 'Edit service' : 'Add service'}</h3><div className="estimate-form-grid"><label className="wide">Service name<input required value={form.name} onChange={event => set({ name: event.target.value })} /></label><label>Category<select value={form.category} onChange={event => set({ category: event.target.value })}>{SERVICE_CATEGORIES.map(item => <option key={item}>{item}</option>)}</select></label><label>Pricing method<input value={form.pricingMethod} onChange={event => set({ pricingMethod: event.target.value })} placeholder="visit, project, hour" /></label><label>Starting price<input type="number" min="0" step="0.01" value={form.startingPrice} onChange={event => set({ startingPrice: event.target.value })} /></label><label>Price range<input value={form.priceRange} onChange={event => set({ priceRange: event.target.value })} /></label><label>Estimated labor hours<input type="number" min="0" step="0.25" value={form.estimatedLaborHours} onChange={event => set({ estimatedLaborHours: event.target.value })} /></label><label>Suggested deposit %<input type="number" min="0" max="100" value={form.suggestedDeposit} onChange={event => set({ suggestedDeposit: event.target.value })} /></label><label className="wide">Internal description<textarea value={form.description} onChange={event => set({ description: event.target.value })} /></label><label className="wide">Customer-facing description<textarea value={form.customerDescription} onChange={event => set({ customerDescription: event.target.value })} /></label><label className="wide">Default materials<textarea value={form.defaultMaterials} onChange={event => set({ defaultMaterials: event.target.value })} /></label><label className="wide">Internal cost notes<textarea value={form.internalCostNotes} onChange={event => set({ internalCostNotes: event.target.value })} /></label><label className="service-active"><input type="checkbox" checked={form.active} onChange={event => set({ active: event.target.checked })} /> Active service</label></div><footer><button type="button" onClick={() => { setForm(blankService); setEditingId(''); }}>Clear</button><button className="primary">Save service</button></footer></form><section className="panel glass service-directory"><div className="service-directory-toolbar"><input type="search" placeholder="Search services" value={search} onChange={event => setSearch(event.target.value)} /><button onClick={() => setShowInactive(value => !value)}>{showInactive ? 'View active' : 'View inactive'}</button></div><div>{services.map(item => <article key={item.serviceId || item.id}><span>{item.category}</span><h3>{item.name}</h3><strong>{money(item.startingPrice ?? item.price)} / {item.pricingMethod || item.unit}</strong><p>{item.customerDescription || item.description || 'No description saved.'}</p><dl><div><dt>Labor</dt><dd>{item.estimatedLaborHours || '—'} hours</dd></div><div><dt>Deposit</dt><dd>{item.suggestedDeposit || 0}%</dd></div></dl><footer><button onClick={() => edit(item)}>Edit</button><button onClick={() => setData(current => ({ ...current, services: current.services.map(record => (record.serviceId || record.id) === (item.serviceId || item.id) ? { ...record, active: item.active === false, archived: item.active !== false } : record) }))}>{item.active === false ? 'Reactivate' : 'Deactivate'}</button><button className="danger" onClick={() => confirm(`Delete ${item.name}? Existing estimates keep their saved line items.`) && setData(current => ({ ...current, services: current.services.filter(record => (record.serviceId || record.id) !== (item.serviceId || item.id)) }))}>Delete</button></footer></article>)}{!services.length && <p className="estimate-empty">No services match this view.</p>}</div></section></div></div>;
+}

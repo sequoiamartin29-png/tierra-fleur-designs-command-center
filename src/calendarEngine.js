@@ -2,6 +2,19 @@ const records = value => Array.isArray(value) ? value : [];
 const number = value => Number(value || 0);
 const uid = prefix => `${prefix}-${crypto.randomUUID()}`;
 
+export const TFD_EVENT_TYPES = [
+  'Lead Follow-up',
+  'Consultation',
+  'Estimate Deadline',
+  'Project Start',
+  'Project Workday',
+  'Nursery Pickup',
+  'Material Delivery',
+  'Client Check-in',
+  'Payment Due',
+  'Seasonal Maintenance',
+];
+
 export const CALENDAR_EVENT_TYPES = [
   'Work Shift',
   'School Class',
@@ -12,6 +25,7 @@ export const CALENDAR_EVENT_TYPES = [
   'Study Session',
   'Appointment',
   'Tierra Fleur',
+  ...TFD_EVENT_TYPES,
   'Personal',
   'Bill Reminder',
   'Other',
@@ -100,7 +114,7 @@ export function enumerateDates(start, end) {
 function inferGroup(event = {}) {
   if (event.group) return event.group;
   if (event.eventType === 'Work Shift' || event.shiftId || event.jobId) return 'work';
-  if (event.eventType === 'Tierra Fleur') return 'tierra';
+  if (event.eventType === 'Tierra Fleur' || TFD_EVENT_TYPES.includes(event.eventType)) return 'tierra';
   if (event.courseId || event.assignmentId || SCHOOL_EVENT_TYPES.includes(event.schoolEventType) || ['School Class', 'Lab', 'Homework', 'Assignment', 'Exam', 'Study Session'].includes(event.eventType)) return 'school';
   return 'personal';
 }

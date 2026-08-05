@@ -39,6 +39,15 @@ import { createFeaturePackStarter, migrateFeaturePackData } from './summaryModel
 import { CalendarDashboardCards, CalendarDistrict } from './calendarDistrict.jsx';
 import { createCalendarStarter, migrateCalendarData } from './calendarEngine.js';
 import {
+  createGrowthStarter,
+  migrateEstimateDocuments,
+  migrateGrowthData,
+  migrateServices,
+  repairLeadFollowUpCalendarLinks,
+} from './growthEngine.js';
+import { GrowthDashboardCards, GrowthDistrict } from './growthDistrict.jsx';
+import { EstimateWorkspace, ServiceLibrary } from './estimateWorkspace.jsx';
+import {
   buildDataBackup,
   importDataBackup,
   prepareProjectPhotosForRuntime,
@@ -336,11 +345,13 @@ const starter = {
   ...createPresentationStarter(),
   ...createFeaturePackStarter(),
   ...createCalendarStarter(),
+  ...createGrowthStarter(),
   notes: '',
   learning: { history: [], completed: [], preferences: { level: 'Growing', focus: 'Business + Design' }, myLessons: [] },
 };
 
 function normalizeData(saved = {}) {
+  saved = saved && typeof saved === 'object' && !Array.isArray(saved) ? saved : {};
   const savedNurseries = Array.isArray(saved.nurseries) ? saved.nurseries : [];
   const needsPlantSourcingMigration = Number(saved.plantSourcingVersion || 0) < 1;
   const savedById = new Map(savedNurseries.map(nursery => [nursery.id, nursery]));
@@ -383,7 +394,13 @@ function normalizeData(saved = {}) {
   });
   const featurePackData = migrateFeaturePackData(saved, { personalTransactions: districtData.personalTransactions });
   const calendarData = migrateCalendarData(saved);
-  return {
+  const growthData = migrateGrowthData(saved);
+  const estimates = migrateEstimateDocuments(districtData.estimates);
+  const services = migrateServices(Array.isArray(saved.services) ? saved.services : starter.services);
+  const business = { ...starter.business, ...(saved.business && typeof saved.business === 'object' && !Array.isArray(saved.business) ? saved.business : {}) };
+  const tasks = (Array.isArray(saved.tasks) ? saved.tasks : starter.tasks).filter(item => item && typeof item === 'object').map(item => ({ ...item, id: item.id || crypto.randomUUID(), title: item.title || 'Untitled task', done: Boolean(item.done), priority: ['High', 'Medium', 'Low'].includes(item.priority) ? item.priority : 'Medium' }));
+  const learning = saved.learning && typeof saved.learning === 'object' && !Array.isArray(saved.learning) ? { ...starter.learning, ...saved.learning, history: Array.isArray(saved.learning.history) ? saved.learning.history : [], completed: Array.isArray(saved.learning.completed) ? saved.learning.completed : [], myLessons: Array.isArray(saved.learning.myLessons) ? saved.learning.myLessons : [] } : starter.learning;
+  return repairLeadFollowUpCalendarLinks({
     ...starter,
     ...saved,
     ...districtData,
@@ -393,9 +410,15 @@ function normalizeData(saved = {}) {
     ...presentationData,
     ...featurePackData,
     ...calendarData,
+    ...growthData,
+    estimates,
+    services,
+    business,
+    tasks,
+    learning,
     nurseries: migratedNurseries,
     plantSourcingVersion: 1,
-  };
+  });
 }
 
 function loadStartupData() {
@@ -467,6 +490,9 @@ function App() {
   const [searchOpen, setSearchOpen] = useState(false);
   const [focusedProjectId, setFocusedProjectId] = useState('');
   const [focusedCalendarEventId, setFocusedCalendarEventId] = useState('');
+  const [focusedLeadId, setFocusedLeadId] = useState('');
+  const [focusedDocumentId, setFocusedDocumentId] = useState('');
+  const [growthInitialTab, setGrowthInitialTab] = useState('Overview');
   const [presentationRequest, setPresentationRequest] = useState(null);
   const [storageError, setStorageError] = useState('');
   const [storageStatus, setStorageStatus] = useState('saved');
@@ -520,6 +546,8 @@ function App() {
   const nav = (next, options = {}) => {
     if (['projects', 'design', 'sketch'].includes(next) && !options.keepProject) setFocusedProjectId('');
     if (next === 'calendar' && !options.keepCalendar) setFocusedCalendarEventId('');
+    if (next === 'growth' && !options.keepGrowth) setFocusedLeadId('');
+    if (next === 'estimates' && !options.keepEstimate) { setFocusedLeadId(''); setFocusedDocumentId(''); }
     setView(next);
     setMenuOpen(false);
   };
@@ -527,6 +555,8 @@ function App() {
   const openDesign = projectId => { setFocusedProjectId(projectId); nav('design', { keepProject: true }); };
   const openSketch = projectId => { setFocusedProjectId(projectId); nav('sketch', { keepProject: true }); };
   const openCalendar = eventId => { setFocusedCalendarEventId(eventId || ''); nav('calendar', { keepCalendar: true }); };
+  const openGrowth = (tab = 'Overview', leadId = '') => { setGrowthInitialTab(tab); setFocusedLeadId(leadId); nav('growth', { keepGrowth: true }); };
+  const openEstimate = (leadId = '', documentId = '') => { setFocusedLeadId(leadId); setFocusedDocumentId(documentId); nav('estimates', { keepEstimate: true }); };
   const openPresentation = request => {
     setFocusedProjectId(request.projectId);
     setPresentationRequest(request);
@@ -589,6 +619,7 @@ function App() {
         <nav>
           {[
             ['dashboard', '⌂', 'Dashboard'],
+            ['growth', '↗', 'Growth District'],
             ['calendar', '◷', 'Calendar District'],
             ['clients', '♙', 'Client District'],
             ['projects', '✦', 'Project District'],
@@ -609,22 +640,23 @@ function App() {
         </nav>
       </aside>
 
-      <UniversalSearch open={searchOpen} onClose={() => setSearchOpen(false)} data={data} navigate={nav} openProject={openProject} openDesign={openDesign} openCalendar={openCalendar} />
+      <UniversalSearch open={searchOpen} onClose={() => setSearchOpen(false)} data={data} navigate={nav} openProject={openProject} openDesign={openDesign} openCalendar={openCalendar} openGrowth={openGrowth} openEstimate={openEstimate} />
 
       <main className="main-content">
         {storageError && <div className="storage-error" role="alert"><strong>Changes are not persisting.</strong><span>{storageError}</span></div>}
         {attachmentStorageError && <div className="storage-error" role="alert"><strong>Property photo storage needs attention.</strong><span>{attachmentStorageError}</span></div>}
-        {view === 'dashboard' && <Dashboard data={data} nav={nav} openProject={openProject} openDesign={openDesign} openCalendar={openCalendar} weather={weather} refreshWeather={refreshWeather} />}
-        {view === 'calendar' && <CalendarDistrict data={data} setData={setData} initialEventId={focusedCalendarEventId} navigate={nav} openProject={openProject} />}
+        {view === 'dashboard' && <Dashboard data={data} nav={nav} openGrowth={openGrowth} openProject={openProject} openDesign={openDesign} openCalendar={openCalendar} weather={weather} refreshWeather={refreshWeather} />}
+        {view === 'growth' && <GrowthDistrict data={data} setData={setData} initialTab={growthInitialTab} requestedLeadId={focusedLeadId} clearLeadRequest={() => setFocusedLeadId('')} openProject={openProject} openCalendar={openCalendar} openEstimate={openEstimate} />}
+        {view === 'calendar' && <CalendarDistrict data={data} setData={setData} initialEventId={focusedCalendarEventId} navigate={nav} openProject={openProject} openLead={leadId => openGrowth('Leads', leadId)} />}
         {view === 'clients' && <ClientDistrict data={data} setData={setData} openProject={openProject} />}
         {view === 'projects' && <ProjectDistrict data={data} setData={setData} initialProjectId={focusedProjectId} openDesign={openDesign} openClients={() => nav('clients')} openEstimates={() => nav('estimates')} openFinance={() => nav('finance')} openPresentation={openPresentation} />}
         {view === 'design' && <DesignDistrict data={data} setData={setData} initialProjectId={focusedProjectId} openProject={openProject} openProjectDistrict={() => nav('projects')} openSketch={openSketch} openPresentation={openPresentation} storageStatus={storageStatus} />}
         {view === 'sketch' && <SketchStudio projects={data.projects} initialProjectId={focusedProjectId} />}
         {view === 'finance' && <FinanceDistrict data={data} setData={setData} openProject={openProject} />}
         {view === 'money' && <Expenses data={data} setData={setData} />}
-        {view === 'estimates' && <Estimates data={data} setData={setData} />}
+        {view === 'estimates' && <EstimateWorkspace data={data} setData={setData} initialLeadId={focusedLeadId} initialDocumentId={focusedDocumentId} clearRequest={() => { setFocusedLeadId(''); setFocusedDocumentId(''); }} openProject={openProject} />}
         {view === 'tasks' && <Tasks items={data.tasks} setItems={v => update('tasks', v)} />}
-        {view === 'services' && <Services items={data.services} setItems={v => update('services', v)} />}
+        {view === 'services' && <ServiceLibrary data={data} setData={setData} />}
         {view === 'plant-sourcing' && <PlantSourcingDirectory items={data.nurseries} setItems={v => update('nurseries', v)} />}
         {view === 'learning' && <LearningWorkspace learning={data.learning || starter.learning} setLearning={v => update('learning', v)} />}
         {view === 'settings' && <Settings data={data} setData={setData} />}
@@ -637,7 +669,7 @@ function SectionTitle({ eyebrow, title, text, action }) {
   return <div className="section-title"><div><span>{eyebrow}</span><h2>{title}</h2><p>{text}</p></div>{action}</div>;
 }
 
-function Dashboard({ data, nav, openProject, openDesign, openCalendar, weather, refreshWeather }) {
+function Dashboard({ data, nav, openGrowth, openProject, openDesign, openCalendar, weather, refreshWeather }) {
   const revenue = data.estimates.filter(x => x.status === 'Paid').reduce((sum, x) => sum + Number(x.total || 0), 0);
   const expenses = data.expenses.reduce((sum, x) => sum + Number(x.amount || 0), 0);
   const openProjects = data.projects.filter(x => x.status !== 'Completed').length;
@@ -669,6 +701,8 @@ function Dashboard({ data, nav, openProject, openDesign, openCalendar, weather, 
 
     <CalendarDashboardCards data={data} openCalendar={openCalendar} />
 
+    <GrowthDashboardCards data={data} openGrowth={openGrowth} />
+
     <Phase4DashboardCards data={data} openProject={openProject} />
 
     <Phase5DashboardCards data={data} openProject={openProject} />
@@ -680,6 +714,7 @@ function Dashboard({ data, nav, openProject, openDesign, openCalendar, weather, 
         <SectionTitle eyebrow="Quick launch" title="Run the business" text="Jump straight into the tools used most often." />
         <div className="quick-grid">
           {[
+            ['Growth District', 'Leads, follow-ups, pipeline, and outreach', 'growth'],
             ['Design District', 'Concepts, palettes, photos, and plans', 'design'],
             ['Calendar District', 'Shifts, school, and personal commitments', 'calendar'],
             ['Finance District', 'Personal and Tierra Fleur ledgers', 'finance'],

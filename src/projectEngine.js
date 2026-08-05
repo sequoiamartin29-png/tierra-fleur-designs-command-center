@@ -356,25 +356,26 @@ export function calculateProjectFinancials(data, projectId) {
   ];
   const sumCategories = categories => expenseRows.filter(row => categories.includes(row.category)).reduce((sum, row) => sum + row.amount, 0);
   const plantCosts = sumCategories(['Plants', 'Plants & Materials']);
-  const materialCosts = sumCategories(['Soil', 'Mulch', 'Containers', 'Fertilizer', 'Equipment', 'Tools & Equipment']);
+  const materialCosts = sumCategories(['Soil', 'Mulch', 'Containers', 'Fertilizer', 'Stone', 'Edging', 'Hardscape materials']);
+  const equipmentCost = sumCategories(['Equipment', 'Tools & Equipment']);
   const nurseryShipping = sumCategories(['Nursery Shipping']);
   const recordedLabor = sumCategories(['Labor', 'Subcontractor']);
   const laborCost = recordedLabor || asNumber(project.profitPlan?.laborHours) * asNumber(project.profitPlan?.laborRate);
   const recordedMileage = sumCategories(['Mileage', 'Fuel & Travel', 'Fuel']);
   const mileageCost = recordedMileage || asNumber(project.profitPlan?.mileage) * asNumber(project.profitPlan?.mileageRate);
   const deliveryCost = sumCategories(['Delivery']);
-  const mapped = new Set(['Plants', 'Plants & Materials', 'Soil', 'Mulch', 'Containers', 'Fertilizer', 'Equipment', 'Tools & Equipment', 'Nursery Shipping', 'Labor', 'Subcontractor', 'Mileage', 'Fuel & Travel', 'Fuel', 'Delivery']);
+  const mapped = new Set(['Plants', 'Plants & Materials', 'Soil', 'Mulch', 'Containers', 'Fertilizer', 'Stone', 'Edging', 'Hardscape materials', 'Equipment', 'Tools & Equipment', 'Nursery Shipping', 'Labor', 'Subcontractor', 'Mileage', 'Fuel & Travel', 'Fuel', 'Delivery']);
   const otherExpenses = expenseRows.filter(row => !mapped.has(row.category)).reduce((sum, row) => sum + row.amount, 0);
-  const totalProjectCost = plantCosts + materialCosts + nurseryShipping + laborCost + mileageCost + deliveryCost + otherExpenses;
-  const estimates = documents.filter(item => item.documentType !== 'Invoice');
+  const totalProjectCost = plantCosts + materialCosts + equipmentCost + nurseryShipping + laborCost + mileageCost + deliveryCost + otherExpenses;
+  const estimates = documents.filter(item => item.documentType !== 'Invoice' && !['Declined', 'Expired'].includes(item.status));
   const invoices = documents.filter(item => item.documentType === 'Invoice');
   const estimatedClientRevenue = estimates.reduce((sum, item) => sum + asNumber(item.total), 0);
-  const approvedClientRevenue = estimates.filter(item => ['Approved', 'Deposit Paid', 'Paid'].includes(item.status)).reduce((sum, item) => sum + asNumber(item.total), 0);
+  const approvedClientRevenue = estimates.filter(item => ['Accepted', 'Approved', 'Converted to Project', 'Deposit Paid', 'Paid'].includes(item.status)).reduce((sum, item) => sum + asNumber(item.total), 0);
   const deposits = transactions.filter(item => item.type === 'Deposit' && item.status !== 'Unpaid').reduce((sum, item) => sum + asNumber(item.amount), 0);
   const paymentsReceived = transactions.filter(item => item.type === 'Client Payment' && item.status !== 'Unpaid').reduce((sum, item) => sum + asNumber(item.amount), 0);
   const clientRevenue = transactions.filter(item => ['Revenue', 'Client Payment', 'Deposit'].includes(item.type) && item.status !== 'Unpaid').reduce((sum, item) => sum + asNumber(item.amount), 0);
-  const invoiced = invoices.reduce((sum, item) => sum + asNumber(item.total), 0);
-  const outstandingBalance = Math.max(0, invoiced - deposits - paymentsReceived);
+  const linkedPayments = invoice => transactions.filter(item => item.invoiceId === (invoice.invoiceId || invoice.id) && ['Client Payment', 'Deposit', 'Revenue'].includes(item.type) && item.status !== 'Unpaid').reduce((sum, item) => sum + asNumber(item.amount), 0);
+  const outstandingBalance = invoices.reduce((sum, item) => sum + Math.max(0, asNumber(item.total) - Math.max(asNumber(item.paymentsReceived), linkedPayments(item))), 0);
   const netProfit = clientRevenue - totalProjectCost;
   const profitMargin = clientRevenue > 0 ? netProfit / clientRevenue * 100 : 0;
   const desiredMargin = Math.min(95, Math.max(0, asNumber(project.profitPlan?.desiredMargin)));
@@ -390,6 +391,7 @@ export function calculateProjectFinancials(data, projectId) {
     outstandingBalance,
     plantCosts,
     materialCosts,
+    equipmentCost,
     nurseryShipping,
     laborCost,
     mileageCost,
@@ -399,6 +401,8 @@ export function calculateProjectFinancials(data, projectId) {
     totalCost: totalProjectCost,
     clientRevenue,
     netProfit,
+    actualProfit: netProfit,
+    estimatedProfit: approvedClientRevenue - totalProjectCost,
     profitMargin,
     recommendedPrice,
   };

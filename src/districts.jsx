@@ -21,6 +21,8 @@ import {
   storePreparedProjectPhoto,
 } from './imageStorage.js';
 import { PersonalFinanceWorkspace } from './personalFinanceWorkspace.jsx';
+import { nextEstimateNumber, normalizeEstimateLine } from './growthEngine.js';
+import { createCalendarEvent, localDate } from './calendarEngine.js';
 
 export const PERSONAL_CATEGORIES = [
   'Job Income',
@@ -233,7 +235,7 @@ function EmptyDistrict({ title, text }) {
   return <div className="district-empty"><span aria-hidden="true">❦</span><strong>{title}</strong><p>{text}</p></div>;
 }
 
-export function UniversalSearch({ open, onClose, data, navigate, openProject, openDesign, openCalendar }) {
+export function UniversalSearch({ open, onClose, data, navigate, openProject, openDesign, openCalendar, openGrowth, openEstimate }) {
   const [query, setQuery] = useState('');
   useEffect(() => { if (!open) setQuery(''); }, [open]);
   const groups = useMemo(() => {
@@ -262,8 +264,20 @@ export function UniversalSearch({ open, onClose, data, navigate, openProject, op
       id: recordId(document, document.documentType) || document.id,
       title: `${document.documentType}: ${document.title}`,
       detail: `${document.client || 'Unassigned'} • ${money(document.total)}`,
-      action: () => navigate('estimates'),
+      action: () => openEstimate ? openEstimate('', recordId(document, document.documentType) || document.id) : navigate('estimates'),
     }));
+    const leads = (data.leads || []).filter(lead => match(lead.fullName, lead.organizationName, lead.phone, lead.email, lead.serviceAddress, lead.serviceRequested, lead.currentStage, lead.notes, lead.tags)).slice(0, 8).map(lead => ({
+      id: lead.leadId,
+      title: lead.fullName || lead.organizationName,
+      detail: `${lead.currentStage} • ${money(lead.estimatedJobValue || lead.estimatedBudget)}`,
+      action: () => openGrowth ? openGrowth('Leads', lead.leadId) : navigate('growth'),
+    }));
+    const growthRecords = [
+      ...(data.opportunities || []).filter(item => match(item.organization, item.contactPerson, item.opportunityType, item.status, item.notes)).map(item => ({ id: item.opportunityId, title: item.organization, detail: `${item.status} • Commercial opportunity`, tab: 'Opportunities' })),
+      ...(data.marketingTemplates || []).filter(item => match(item.title, item.channel, item.audience, item.message)).map(item => ({ id: item.templateId, title: item.title, detail: `${item.channel} • Marketing template`, tab: 'Marketing' })),
+      ...(data.referrals || []).filter(item => match(item.referrer, item.outcome, item.notes)).map(item => ({ id: item.referralId, title: item.referrer, detail: `${item.outcome} • Referral`, tab: 'Referrals' })),
+      ...(data.portfolioEntries || []).filter(item => match(item.projectTitle, item.projectType, item.location, item.description, item.servicesPerformed)).map(item => ({ id: item.portfolioEntryId, title: item.projectTitle, detail: `${item.permissionStatus} • Portfolio story`, tab: 'Portfolio' })),
+    ].slice(0, 10).map(item => ({ ...item, action: () => openGrowth ? openGrowth(item.tab) : navigate('growth') }));
     const transactions = [...data.businessTransactions, ...data.personalTransactions, ...data.expenses].filter(transaction => match(
       transaction.transactionId,
       transaction.category,
@@ -451,6 +465,8 @@ export function UniversalSearch({ open, onClose, data, navigate, openProject, op
     }));
     return [
       ['Client District', clients],
+      ['Growth District · Leads', leads],
+      ['Growth District · Opportunities, Marketing & Portfolio', growthRecords],
       ['Project District', projects],
       ['Project District · Living Project Records', livingProjectRecords],
       ['Project District · Client Presentations', presentationRecords],
@@ -463,7 +479,7 @@ export function UniversalSearch({ open, onClose, data, navigate, openProject, op
       ['Calendar District · Events', calendarEvents],
       ['Calendar District · Jobs & Courses', calendarLibraries],
     ].filter(([, items]) => items.length);
-  }, [query, data, navigate, openProject, openDesign, openCalendar]);
+  }, [query, data, navigate, openProject, openDesign, openCalendar, openGrowth, openEstimate]);
   if (!open) return null;
   return <div className="universal-search-backdrop" role="presentation" onMouseDown={event => event.target === event.currentTarget && onClose()}>
     <section className="universal-search glass" role="dialog" aria-modal="true" aria-label="Search all districts">
@@ -522,11 +538,21 @@ export function ClientDistrict({ data, setData, openProject }) {
         <div className="district-list-toolbar"><div><span className="district-eyebrow">Directory</span><h3>Clients and their projects</h3></div><input type="search" placeholder="Search clients" value={search} onChange={event => setSearch(event.target.value)} /></div>
         <div className="client-district-grid">{clients.map(client => {
           const projects = data.projects.filter(project => project.clientId === client.clientId && !project.archived);
+          const documents = data.estimates.filter(document => document.clientId === client.clientId && !document.archived);
+          const transactions = data.businessTransactions.filter(transaction => transaction.clientId === client.clientId && !transaction.archived && transaction.status !== 'Unpaid');
+          const totalRevenue = transactions.filter(transaction => ['Revenue', 'Client Payment', 'Deposit'].includes(transaction.type)).reduce((sum, transaction) => sum + number(transaction.amount), 0);
+          const outstanding = documents.filter(document => document.documentType === 'Invoice' && !['Paid', 'Cancelled'].includes(document.status)).reduce((sum, document) => sum + Math.max(0, number(document.total) - number(document.paymentsReceived)), 0);
+          const lead = data.leads?.find(item => item.clientId === client.clientId || item.leadId === client.originalLeadId);
+          const photos = data.projectPhotos.filter(photo => !photo.archived && (photo.clientId === client.clientId || projects.some(project => project.projectId === photo.projectId)));
+          const communications = [...(Array.isArray(client.communicationHistory) ? client.communicationHistory : []), ...(data.followUps || []).filter(item => item.clientId === client.clientId || item.leadId === lead?.leadId)];
           return <article className="connected-client-card" key={client.clientId}>
             <div className="connected-card-head"><div><h4>{client.name}</h4><p>{client.address || 'No address saved'}</p></div><span>{projects.length} {projects.length === 1 ? 'project' : 'projects'}</span></div>
             <div className="client-contact-line">{client.phone && <a href={`tel:${client.phone}`}>{client.phone}</a>}{client.email && <a href={`mailto:${client.email}`}>{client.email}</a>}</div>
+            <div className="client-growth-facts"><span>Lead source<strong>{client.leadSource || client.source || lead?.leadSource || 'Not recorded'}</strong></span><span>Referral<strong>{client.referralSource || lead?.referralSource || 'Not recorded'}</strong></span><span>Original inquiry<strong>{dateLabel(client.originalInquiryDate || lead?.dateReceived)}</strong></span><span>Revenue<strong>{money(totalRevenue)}</strong></span><span>Outstanding<strong>{money(outstanding)}</strong></span><span>Communication history<strong>{communications.length} record{communications.length === 1 ? '' : 's'}</strong></span></div>
             {client.notes && <p className="connected-notes">{client.notes}</p>}
+            {photos.length > 0 && <div className="client-photo-strip">{photos.slice(0, 4).map(photo => <img key={photo.photoId || photo.id} src={photo.image} alt={photo.label || photo.caption || 'Client property'} />)}<span>{photos.length} photo{photos.length === 1 ? '' : 's'}</span></div>}
             <div className="linked-projects">{projects.map(project => <button key={project.projectId} onClick={() => openProject(project.projectId)}><strong>{project.projectId}</strong><span>{project.name}</span></button>)}{!projects.length && <small>No projects connected yet.</small>}</div>
+            {documents.length > 0 && <div className="client-document-links">{documents.slice(0, 4).map(document => <span key={document.id}>{document.documentType} · {document.status} · {money(document.total)}</span>)}</div>}
             <ClientProjectHistory data={data} client={client} openProject={openProject} />
             <div className="connected-card-actions"><button onClick={() => patch(client.clientId, { archived: true })}>Archive</button><button className="danger" onClick={() => remove(client)}>Delete</button></div>
           </article>;
@@ -551,7 +577,8 @@ export function ProjectDistrict({ data, setData, initialProjectId, openDesign, o
   const projectSubmissionRef = useRef(false);
   const [selectedId, setSelectedId] = useState(initialProjectId || '');
   const [tab, setTab] = useState('Overview');
-  const [sourceForm, setSourceForm] = useState({ nurseryId: '', plant: '', quantity: '', estimatedCost: '', status: 'Considering', notes: '' });
+  const emptySource = { nurseryId: '', plant: '', variety: '', containerSize: '', quantity: '', quantityAvailable: '', wholesaleCost: '', retailCost: '', deliveryFee: '', estimatedCost: '', availabilityDate: '', lastVerifiedDate: today(), pickupStatus: 'Not ordered', status: 'Considering', shortage: false, substitutePlant: '', notes: '' };
+  const [sourceForm, setSourceForm] = useState(emptySource);
   const [photoStage, setPhotoStage] = useState('Before');
   const [photoCaption, setPhotoCaption] = useState('');
   const [photoDraft, setPhotoDraft] = useState(null);
@@ -737,7 +764,8 @@ export function ProjectDistrict({ data, setData, initialProjectId, openDesign, o
     event.preventDefault();
     if (!sourceForm.nurseryId || !sourceForm.plant.trim()) return;
     const id = uid('source-record');
-    setData(current => addTimelineEvent({ ...current, sourcingRecords: [{ ...sourceForm, id, sourcingRecordId: id, projectId: selectedId, createdAt: new Date().toISOString(), archived: false }, ...current.sourcingRecords] }, {
+    const estimatedCost = sourceForm.estimatedCost || number(sourceForm.quantity) * number(sourceForm.wholesaleCost) + number(sourceForm.deliveryFee);
+    setData(current => addTimelineEvent({ ...current, sourcingRecords: [{ ...sourceForm, estimatedCost, id, sourcingRecordId: id, projectId: selectedId, createdAt: new Date().toISOString(), archived: false }, ...current.sourcingRecords] }, {
       projectId: selectedId,
       eventType: 'sourcing.linked',
       title: 'Sourcing record linked',
@@ -746,7 +774,31 @@ export function ProjectDistrict({ data, setData, initialProjectId, openDesign, o
       dedupeKey: `sourcing.linked:${id}`,
       automatic: true,
     }));
-    setSourceForm({ nurseryId: '', plant: '', quantity: '', estimatedCost: '', status: 'Considering', notes: '' });
+    setSourceForm(emptySource);
+  };
+  const patchSource = (record, changes) => setData(current => {
+    let next = { ...current, sourcingRecords: current.sourcingRecords.map(item => item.id === record.id ? { ...item, ...changes, updatedAt: new Date().toISOString() } : item) };
+    if (changes.pickupStatus === 'Pickup scheduled' && (changes.availabilityDate || record.availabilityDate) && !current.calendarEvents.some(item => item.sourcingRecordId === (record.sourcingRecordId || record.id) && !item.archived)) {
+      const nursery = current.nurseries.find(item => (item.nurseryId || item.id) === record.nurseryId);
+      next.calendarEvents = [...current.calendarEvents, createCalendarEvent({ title: `Nursery pickup · ${record.plant}`, description: nursery?.name || '', eventType: 'Nursery Pickup', group: 'tierra', date: changes.availabilityDate || record.availabilityDate, endDate: changes.availabilityDate || record.availabilityDate, startTime: '10:00', endTime: '11:00', projectId: selectedId, sourcingRecordId: record.sourcingRecordId || record.id, relatedRecordId: record.sourcingRecordId || record.id })];
+    }
+    return next;
+  });
+  const addSourceCost = record => {
+    const amount = number(record.estimatedCost) || number(record.quantity) * number(record.wholesaleCost) + number(record.deliveryFee);
+    if (!amount || !confirm(`Add ${money(amount)} as a plant cost for ${selectedId}?`)) return;
+    const transactionId = uid('txn-business');
+    setData(current => ({ ...current, businessTransactions: [{ id: transactionId, transactionId, type: 'Expense', taxCategory: 'Plants', amount, date: today(), dueDate: '', status: 'Paid', paymentMethod: 'Not specified', clientId: selected?.clientId || '', projectId: selectedId, nurseryId: record.nurseryId, relatedRecordId: record.sourcingRecordId || record.id, notes: `${record.plant}${record.variety ? ` · ${record.variety}` : ''}`, archived: false }, ...current.businessTransactions], sourcingRecords: current.sourcingRecords.map(item => item.id === record.id ? { ...item, costTransactionId: transactionId } : item) }));
+  };
+  const addSourceToEstimate = record => {
+    const line = normalizeEstimateLine({ category: /tree/i.test(record.plant) ? 'Trees' : 'Plants', description: [record.plant, record.variety, record.containerSize].filter(Boolean).join(' · '), quantity: record.quantity || 1, unit: 'plant', cost: record.wholesaleCost || '', customerPrice: record.retailCost || record.wholesaleCost || '', taxable: true, notes: record.notes || '' });
+    setData(current => {
+      const existing = current.estimates.find(item => item.projectId === selectedId && item.documentType !== 'Invoice' && item.status === 'Draft' && !item.archived);
+      if (existing) return { ...current, estimates: current.estimates.map(item => item.id === existing.id ? { ...item, lines: [...(item.lines || []), line], lineItems: [...(item.lines || []), line], updatedAt: new Date().toISOString() } : item) };
+      const id = uid('estimate');
+      return { ...current, estimates: [{ id, estimateId: id, invoiceId: '', documentType: 'Estimate', estimateNumber: nextEstimateNumber(current.estimates, localDate()), leadId: selected?.leadId || '', clientId: selected?.clientId || '', projectId: selectedId, client: client?.name || '', title: `${selected?.name || 'Landscape'} Proposal`, status: 'Draft', creationDate: localDate(), date: localDate(), expirationDate: '', serviceAddress: selected?.propertyAddress || '', scopeOfWork: selected?.notes || '', lines: [line], lineItems: [line], discountAmount: '', taxRate: current.business.defaultTax || '', depositPercent: '30', archived: false, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }, ...current.estimates] };
+    });
+    openEstimates();
   };
   const selectPhoto = async file => {
     if (!file) return;
@@ -898,16 +950,21 @@ export function ProjectDistrict({ data, setData, initialProjectId, openDesign, o
         <form className="panel glass district-form" onSubmit={addSource}><span className="district-eyebrow">Project planting list</span><h3>Add a sourcing record</h3>
           <select required value={sourceForm.nurseryId} onChange={event => setSourceForm({ ...sourceForm, nurseryId: event.target.value })}><option value="">Choose nursery *</option>{data.nurseries.filter(item => !item.archived).map(item => <option key={item.nurseryId || item.id} value={item.nurseryId || item.id}>{item.name}</option>)}</select>
           <input required placeholder="Plant, variety, or material *" value={sourceForm.plant} onChange={event => setSourceForm({ ...sourceForm, plant: event.target.value })} />
-          <input placeholder="Quantity or size" value={sourceForm.quantity} onChange={event => setSourceForm({ ...sourceForm, quantity: event.target.value })} />
-          <input type="number" min="0" step="0.01" placeholder="Estimated cost" value={sourceForm.estimatedCost} onChange={event => setSourceForm({ ...sourceForm, estimatedCost: event.target.value })} />
-          <select value={sourceForm.status} onChange={event => setSourceForm({ ...sourceForm, status: event.target.value })}>{['Considering', 'Requested', 'Ordered', 'Received', 'Unavailable'].map(item => <option key={item}>{item}</option>)}</select>
+          <div className="split-fields"><input placeholder="Variety / cultivar" value={sourceForm.variety} onChange={event => setSourceForm({ ...sourceForm, variety: event.target.value })} /><input placeholder="Container size" value={sourceForm.containerSize} onChange={event => setSourceForm({ ...sourceForm, containerSize: event.target.value })} /></div>
+          <div className="split-fields"><input type="number" min="0" step="1" placeholder="Quantity needed" value={sourceForm.quantity} onChange={event => setSourceForm({ ...sourceForm, quantity: event.target.value })} /><input type="number" min="0" step="1" placeholder="Quantity available" value={sourceForm.quantityAvailable} onChange={event => setSourceForm({ ...sourceForm, quantityAvailable: event.target.value })} /></div>
+          <div className="split-fields"><input type="number" min="0" step="0.01" placeholder="Wholesale cost each" value={sourceForm.wholesaleCost} onChange={event => setSourceForm({ ...sourceForm, wholesaleCost: event.target.value })} /><input type="number" min="0" step="0.01" placeholder="Retail / customer price" value={sourceForm.retailCost} onChange={event => setSourceForm({ ...sourceForm, retailCost: event.target.value })} /></div>
+          <div className="split-fields"><input type="number" min="0" step="0.01" placeholder="Delivery fee" value={sourceForm.deliveryFee} onChange={event => setSourceForm({ ...sourceForm, deliveryFee: event.target.value })} /><input type="number" min="0" step="0.01" placeholder="Total estimated cost" value={sourceForm.estimatedCost} onChange={event => setSourceForm({ ...sourceForm, estimatedCost: event.target.value })} /></div>
+          <div className="split-fields"><label>Availability date<input type="date" value={sourceForm.availabilityDate} onChange={event => setSourceForm({ ...sourceForm, availabilityDate: event.target.value })} /></label><label>Last verified<input type="date" value={sourceForm.lastVerifiedDate} onChange={event => setSourceForm({ ...sourceForm, lastVerifiedDate: event.target.value })} /></label></div>
+          <div className="split-fields"><select value={sourceForm.status} onChange={event => setSourceForm({ ...sourceForm, status: event.target.value })}>{['Considering', 'Requested', 'Available', 'Ordered', 'Received', 'Unavailable', 'Substituted'].map(item => <option key={item}>{item}</option>)}</select><select value={sourceForm.pickupStatus} onChange={event => setSourceForm({ ...sourceForm, pickupStatus: event.target.value })}>{['Not ordered', 'Ordered', 'Pickup scheduled', 'Picked up', 'Delivered'].map(item => <option key={item}>{item}</option>)}</select></div>
+          <input placeholder="Substitute plant (if needed)" value={sourceForm.substitutePlant} onChange={event => setSourceForm({ ...sourceForm, substitutePlant: event.target.value })} />
+          <label className="source-shortage-check"><input type="checkbox" checked={sourceForm.shortage} onChange={event => setSourceForm({ ...sourceForm, shortage: event.target.checked })} /> Shortage or quantity gap</label>
           <textarea placeholder="Cultivar, availability, substitutions, shipping…" value={sourceForm.notes} onChange={event => setSourceForm({ ...sourceForm, notes: event.target.value })} />
           <button className="primary">Connect source to project</button>
         </form>
         <section className="panel glass"><div className="district-panel-title"><div><span className="district-eyebrow">Plant Sourcing District</span><h3>Related sourcing records</h3></div><strong>{money(sourceRecords.reduce((sum, item) => sum + number(item.estimatedCost), 0))}</strong></div>
           <div className="district-record-list">{sourceRecords.map(item => {
             const nursery = data.nurseries.find(source => (source.nurseryId || source.id) === item.nurseryId);
-            return <article key={item.id}><div><span>{item.status}</span><h4>{item.plant}</h4><p>{nursery?.name || 'Nursery unavailable'} • {item.quantity || 'Quantity open'}</p><small>{item.notes || 'No notes'}</small></div><strong>{money(item.estimatedCost)}</strong><div><button onClick={() => archiveRelated('sourcingRecords', item.id)}>Archive</button><button className="danger" onClick={() => deleteRelated('sourcingRecords', item.id, 'sourcing record')}>Delete</button></div></article>;
+            return <article key={item.id}><div><span>{item.status} · {item.pickupStatus || 'Not ordered'}{item.shortage ? ' · Shortage' : ''}</span><h4>{item.plant}{item.variety ? ` · ${item.variety}` : ''}</h4><p>{nursery?.name || 'Nursery unavailable'} • {item.quantity || 'Quantity open'}{item.containerSize ? ` · ${item.containerSize}` : ''}</p><small>{item.notes || item.substitutePlant ? `${item.notes || ''}${item.substitutePlant ? ` Substitute: ${item.substitutePlant}` : ''}` : `Verified ${dateLabel(item.lastVerifiedDate)}`}</small><div className="source-price-comparison"><span>Wholesale <b>{money(item.wholesaleCost)}</b></span><span>Retail <b>{money(item.retailCost)}</b></span><span>Delivery <b>{money(item.deliveryFee)}</b></span></div></div><strong>{money(item.estimatedCost)}</strong><div><select aria-label="Pickup status" value={item.pickupStatus || 'Not ordered'} onChange={event => patchSource(item, { pickupStatus: event.target.value })}>{['Not ordered', 'Ordered', 'Pickup scheduled', 'Picked up', 'Delivered'].map(status => <option key={status}>{status}</option>)}</select><button onClick={() => addSourceToEstimate(item)}>Add to estimate</button><button disabled={item.costTransactionId} onClick={() => addSourceCost(item)}>{item.costTransactionId ? 'Cost added' : 'Add project cost'}</button><button onClick={() => archiveRelated('sourcingRecords', item.id)}>Archive</button><button className="danger" onClick={() => deleteRelated('sourcingRecords', item.id, 'sourcing record')}>Delete</button></div></article>;
           })}{!sourceRecords.length && <EmptyDistrict title="No plants connected yet" text="Add a nursery and plant to begin the project sourcing list." />}</div>
         </section>
       </div>}
@@ -915,12 +972,13 @@ export function ProjectDistrict({ data, setData, initialProjectId, openDesign, o
       {tab === 'Finance' && <div className="project-finance-stack">
         <FinanceSummaryCards data={data} projectId={selected.projectId} />
         <section className="project-profit-hero glass">
-          <div><span className="district-eyebrow">Project profit calculator</span><h3>{money(finance.netProfit)} projected net profit</h3><p>Recommended project price: <strong>{money(finance.recommendedPrice)}</strong></p></div>
+          <div><span className="district-eyebrow">Project profitability</span><h3>{money(finance.actualProfit)} actual profit</h3><p>Estimated profit from accepted work: <strong>{money(finance.estimatedProfit)}</strong> · Recommended project price: <strong>{money(finance.recommendedPrice)}</strong></p></div>
           <Ring value={finance.profitMargin} label="profit margin" detail={`${money(finance.clientRevenue)} revenue`} tone={finance.netProfit >= 0 ? 'olive' : 'rose'} />
         </section>
         <section className="project-cost-grid">{[
           ['Plant costs', finance.plantCosts],
           ['Material costs', finance.materialCosts],
+          ['Equipment cost', finance.equipmentCost],
           ['Nursery shipping', finance.nurseryShipping],
           ['Mileage cost', finance.mileageCost],
           ['Labor cost', finance.laborCost],
@@ -929,9 +987,10 @@ export function ProjectDistrict({ data, setData, initialProjectId, openDesign, o
           ['Total project cost', finance.totalCost],
           ['Client revenue', finance.clientRevenue],
           ['Outstanding balance', finance.outstandingBalance],
-          ['Net profit', finance.netProfit],
+          ['Estimated profit', finance.estimatedProfit],
+          ['Actual profit', finance.actualProfit],
           ['Profit margin', `${finance.profitMargin.toFixed(1)}%`],
-        ].map(([label, value]) => <SummaryCard key={label} label={label} value={typeof value === 'number' ? money(value) : value} note={label === 'Total project cost' ? 'All connected costs' : 'Project connection'} accent={label === 'Net profit' ? 'gold' : ''} />)}</section>
+        ].map(([label, value]) => <SummaryCard key={label} label={label} value={typeof value === 'number' ? money(value) : value} note={label === 'Total project cost' ? 'All connected costs' : label === 'Estimated profit' ? 'Accepted estimate minus costs' : label === 'Actual profit' ? 'Received revenue minus costs' : 'Project connection'} accent={label.includes('profit') ? 'gold' : ''} />)}</section>
         <section className="panel glass"><div className="district-panel-title"><div><span className="district-eyebrow">Pricing assumptions</span><h3>Labor, mileage, and margin</h3></div></div>
           <div className="profit-input-grid">{[
             ['Labor hours', 'laborHours'],
@@ -1102,13 +1161,31 @@ function BusinessFinance({ data, setData, openProject }) {
   const transactions = data.businessTransactions.filter(item => !item.archived);
   const visibleTransactions = showArchived ? data.businessTransactions.filter(item => item.archived) : transactions;
   const monthly = transactions.filter(item => String(item.date || item.dueDate).slice(0, 7) === month);
+  const monthlyLegacyExpenses = data.expenses.filter(item => !item.archived && String(item.date).slice(0, 7) === month);
+  const legacyExpenseCategory = category => ({ 'Plants & Materials': 'Plants', 'Tools & Equipment': 'Equipment', 'Fuel & Travel': 'Mileage', Marketing: 'Marketing', Office: 'Office', 'Insurance & Fees': 'Insurance', Subcontractor: 'Subcontractors', Other: 'Other' }[category] || category || 'Other');
   const revenue = monthly.filter(item => ['Revenue', 'Client Payment', 'Deposit'].includes(item.type) && item.status !== 'Unpaid').reduce((sum, item) => sum + number(item.amount), 0);
   const expenses = monthly.filter(item => ['Expense', 'Mileage'].includes(item.type) && item.status !== 'Unpaid').reduce((sum, item) => sum + number(item.amount), 0)
-    + data.expenses.filter(item => !item.archived && String(item.date).slice(0, 7) === month).reduce((sum, item) => sum + number(item.amount), 0);
+    + monthlyLegacyExpenses.reduce((sum, item) => sum + number(item.amount), 0);
   const invoices = data.estimates.filter(item => item.documentType === 'Invoice' && !item.archived);
   const invoiceTotal = invoices.reduce((sum, item) => sum + number(item.total), 0);
-  const invoicePayments = transactions.filter(item => ['Client Payment', 'Deposit'].includes(item.type)).reduce((sum, item) => sum + number(item.amount), 0);
-  const outstanding = Math.max(0, invoiceTotal - invoicePayments);
+  const invoicePayments = invoice => transactions.filter(item => item.invoiceId === (invoice.invoiceId || invoice.id) && ['Client Payment', 'Deposit', 'Revenue'].includes(item.type) && item.status !== 'Unpaid').reduce((sum, item) => sum + number(item.amount), 0);
+  const outstanding = invoices.reduce((sum, invoice) => sum + Math.max(0, number(invoice.total) - Math.max(number(invoice.paymentsReceived), invoicePayments(invoice))), 0);
+  const year = month.slice(0, 4);
+  const yearTransactions = transactions.filter(item => String(item.date || item.dueDate).slice(0, 4) === year && item.status !== 'Unpaid');
+  const yearRevenue = yearTransactions.filter(item => ['Revenue', 'Client Payment', 'Deposit'].includes(item.type)).reduce((sum, item) => sum + number(item.amount), 0);
+  const yearExpenses = yearTransactions.filter(item => ['Expense', 'Mileage'].includes(item.type)).reduce((sum, item) => sum + number(item.amount), 0) + data.expenses.filter(item => !item.archived && String(item.date).slice(0, 4) === year).reduce((sum, item) => sum + number(item.amount), 0);
+  const revenueByClient = data.clients.map(client => ({ client, total: yearTransactions.filter(item => item.clientId === client.clientId && ['Revenue', 'Client Payment', 'Deposit'].includes(item.type)).reduce((sum, item) => sum + number(item.amount), 0) })).filter(item => item.total > 0).sort((left, right) => right.total - left.total);
+  const revenueByProject = data.projects.map(project => ({ project, total: yearTransactions.filter(item => item.projectId === project.projectId && ['Revenue', 'Client Payment', 'Deposit'].includes(item.type)).reduce((sum, item) => sum + number(item.amount), 0) })).filter(item => item.total > 0).sort((left, right) => right.total - left.total);
+  const serviceRevenue = new Map();
+  invoices.forEach(invoice => {
+    const received = Math.max(number(invoice.paymentsReceived), invoicePayments(invoice));
+    const total = Math.max(1, number(invoice.total));
+    (invoice.lines || []).forEach(line => {
+      const label = line.category || line.description || 'Other';
+      const share = number(line.quantity || line.qty) * number(line.customerPrice ?? line.price) / total;
+      serviceRevenue.set(label, (serviceRevenue.get(label) || 0) + received * share);
+    });
+  });
   const add = event => {
     event.preventDefault();
     if (!form.amount) return;
@@ -1146,21 +1223,27 @@ function BusinessFinance({ data, setData, openProject }) {
   };
   const relationDocuments = data.estimates.filter(item => !item.archived);
   return <div className="finance-destination">
-    <div className="finance-summary-grid"><SummaryCard label="Monthly revenue" value={money(revenue)} note={month} accent="olive" /><SummaryCard label="Monthly expenses" value={money(expenses)} note="New and legacy expenses" accent="rose" /><SummaryCard label="Monthly profit" value={money(revenue - expenses)} note="Revenue minus expenses" accent="gold" /><SummaryCard label="Outstanding invoices" value={money(outstanding)} note={`${invoices.filter(item => item.status !== 'Paid').length} open invoices`} /></div>
+    <div className="finance-summary-grid"><SummaryCard label="Monthly revenue" value={money(revenue)} note={month} accent="olive" /><SummaryCard label="Monthly expenses" value={money(expenses)} note="New and legacy expenses" accent="rose" /><SummaryCard label="Monthly profit" value={money(revenue - expenses)} note="Actual revenue minus actual expenses" accent="gold" /><SummaryCard label="Outstanding invoices" value={money(outstanding)} note={`${invoices.filter(item => !['Paid', 'Cancelled'].includes(item.status)).length} open invoices`} /></div>
+    <div className="finance-summary-grid finance-ytd-grid"><SummaryCard label={`${year} revenue`} value={money(yearRevenue)} note="Year to date" accent="olive" /><SummaryCard label={`${year} expenses`} value={money(yearExpenses)} note="Year to date" accent="rose" /><SummaryCard label={`${year} actual profit`} value={money(yearRevenue - yearExpenses)} note="Received revenue minus recorded costs" accent="gold" /><SummaryCard label="Open pipeline" value={money((data.leads || []).filter(item => !item.archived && !['Lost', 'Completed'].includes(item.currentStage)).reduce((sum, item) => sum + number(item.estimatedJobValue || item.estimatedBudget), 0))} note="Not counted as revenue" /></div>
     <div className="finance-view-tabs">{['Overview', 'Business Ledger', 'Project Profit'].map(item => <button key={item} className={view === item ? 'active' : ''} onClick={() => setView(item)}>{item}</button>)}</div>
     {view === 'Overview' && <>
       <div className="finance-dashboard-grid">
         <section className="panel glass business-month-card"><div><span className="district-eyebrow">Tierra Fleur monthly view</span><h3>Revenue and profit</h3><label>Month<input type="month" value={month} onChange={event => setMonth(event.target.value)} /></label><p>All business records stay separate from Personal Finances.</p></div><Ring value={revenue ? Math.max(0, (revenue - expenses) / revenue * 100) : 0} label="profit margin" detail={`${money(revenue - expenses)} profit`} tone={revenue - expenses >= 0 ? 'olive' : 'rose'} /></section>
         <section className="panel glass"><div className="district-panel-title"><div><span className="district-eyebrow">Tax-ready categories</span><h3>Monthly expense mix</h3></div></div><div className="category-spend-list">{BUSINESS_CATEGORIES.map(category => {
-          const total = monthly.filter(item => item.taxCategory === category && ['Expense', 'Mileage'].includes(item.type)).reduce((sum, item) => sum + number(item.amount), 0);
+          const total = monthly.filter(item => item.taxCategory === category && ['Expense', 'Mileage'].includes(item.type)).reduce((sum, item) => sum + number(item.amount), 0)
+            + monthlyLegacyExpenses.filter(item => legacyExpenseCategory(item.category) === category).reduce((sum, item) => sum + number(item.amount), 0);
           return total > 0 && <div key={category}><span>{category}</span><strong>{money(total)}</strong></div>;
-        }).filter(Boolean)}{!monthly.some(item => ['Expense', 'Mileage'].includes(item.type)) && <EmptyDistrict title="No expenses this month" text="Tax-ready categories are ready for manual entries." />}</div></section>
+        }).filter(Boolean)}{!monthly.some(item => ['Expense', 'Mileage'].includes(item.type)) && !monthlyLegacyExpenses.length && <EmptyDistrict title="No expenses this month" text="Tax-ready categories are ready for manual entries." />}</div></section>
       </div>
       <section className="panel glass"><div className="district-panel-title"><div><span className="district-eyebrow">Estimates and invoices</span><h3>Business documents</h3></div><strong>{relationDocuments.length} saved</strong></div>
         <div className="district-record-list">{relationDocuments.map(item => {
           const project = data.projects.find(projectItem => projectItem.projectId === item.projectId);
           return <article key={item.id}><div><span>{item.documentType} • {item.status}</span><h4>{item.title}</h4><p>{item.client || 'Unassigned client'}{project ? ` • ${project.projectId}` : ''}</p><small>{recordId(item, item.documentType) || item.id}</small></div><strong>{money(item.total)}</strong></article>;
         })}{!relationDocuments.length && <EmptyDistrict title="No estimates or invoices" text="The existing Estimates & Invoices screen remains connected to the Finance District." />}</div>
+      </section>
+      <section className="finance-revenue-breakdown">
+        <div className="panel glass"><div className="district-panel-title"><div><span className="district-eyebrow">Actual revenue</span><h3>By client and project</h3></div></div><div className="category-spend-list">{revenueByClient.slice(0, 6).map(item => <div key={item.client.clientId}><span>{item.client.name}</span><strong>{money(item.total)}</strong></div>)}{revenueByProject.slice(0, 6).map(item => <div key={item.project.projectId}><span>{item.project.projectId} · {item.project.name}</span><strong>{money(item.total)}</strong></div>)}{!revenueByClient.length && !revenueByProject.length && <EmptyDistrict title="No linked revenue yet" text="Connect payments or deposits to a client and project to populate this view." />}</div></div>
+        <div className="panel glass"><div className="district-panel-title"><div><span className="district-eyebrow">Received invoice value</span><h3>Revenue by service category</h3></div></div><div className="category-spend-list">{[...serviceRevenue.entries()].sort((left, right) => right[1] - left[1]).map(([label, total]) => <div key={label}><span>{label}</span><strong>{money(total)}</strong></div>)}{!serviceRevenue.size && <EmptyDistrict title="No service revenue yet" text="Paid invoice line categories will appear here without counting the invoice twice." />}</div></div>
       </section>
     </>}
     {view === 'Business Ledger' && <div className="district-two-column">
