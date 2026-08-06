@@ -24,6 +24,7 @@ import { PersonalFinanceWorkspace } from './personalFinanceWorkspace.jsx';
 import { nextEstimateNumber, normalizeEstimateLine } from './growthEngine.js';
 import { createCalendarEvent, localDate } from './calendarEngine.js';
 import { PLANT_AVAILABILITY_STATUSES } from './plantSourcing.js';
+import { ACADEMY_SEARCH_RECORDS } from './academySearchIndex.js';
 
 export const PERSONAL_CATEGORIES = [
   'Job Income',
@@ -368,6 +369,14 @@ export function UniversalSearch({ open, onClose, data, navigate, openProject, op
       detail: `${item.topic} · ${item.skillLevel} · My Lesson`,
       action: () => navigate('learning'),
     }));
+    const academyRecords = [
+      ...ACADEMY_SEARCH_RECORDS,
+      ...(data.academy?.userContent || []).map(item => ({ id: item.contentId, title: item.title, detail: `${item.type} · User-created Academy curriculum`, text: [item.body, item.learningObjectives, item.tags, item.sourceNotes].flat().join(' ') })),
+      ...(data.academy?.notes || []).map(item => ({ id: item.noteId, title: String(item.body || '').slice(0, 80) || 'Academy note', detail: 'User note · Tierra Fleur Academy', text: item.body || '' })),
+      ...(data.academy?.fieldLabSubmissions || []).map(item => ({ id: item.submissionId, title: String(item.notes || '').slice(0, 80) || 'Field lab submission', detail: `${item.status || 'draft'} · Academy field lab`, text: `${item.locationCategory || ''} ${item.measurements || ''} ${item.notes || ''} ${item.reflection || ''}` })),
+      ...(data.academy?.designChallengeSubmissions || []).map(item => ({ id: item.submissionId, title: String(item.reflection || '').slice(0, 80) || 'Design challenge submission', detail: `${item.status || 'draft'} · Academy design challenge`, text: `${item.linkType || ''} ${item.linkedDesignId || ''} ${item.reflection || ''}` })),
+      ...(data.academy?.clientSimulationRecords || []).map(item => ({ id: item.recordId, title: String(item.scenario || '').slice(0, 80) || 'Client Confidence practice', detail: `${item.status || 'draft'} · Client Confidence Lab`, text: `${item.response || ''} ${item.revisedResponse || ''} ${item.missingConcepts || ''}` })),
+    ].filter(item => match(item.title, item.detail, item.text)).slice(0, 16).map(item => ({ ...item, action: () => navigate('learning') }));
     const calendarJobMap = new Map((data.calendarJobs || []).map(item => [item.jobId, item]));
     const calendarCourseMap = new Map((data.calendarCourses || []).map(item => [item.courseId, item]));
     const calendarEvents = (data.calendarEvents || []).filter(item => {
@@ -477,6 +486,7 @@ export function UniversalSearch({ open, onClose, data, navigate, openProject, op
       ['Finance District', transactions],
       ['Finance District · Estimates & Invoices', documents],
       ['Learning District · My Lessons', myLessons],
+      ['Tierra Fleur Academy', academyRecords],
       ['Calendar District · Events', calendarEvents],
       ['Calendar District · Jobs & Courses', calendarLibraries],
     ].filter(([, items]) => items.length);

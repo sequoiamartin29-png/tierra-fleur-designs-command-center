@@ -1,4 +1,4 @@
-const CACHE = 'tierra-fleur-v3';
+const CACHE = 'tierra-fleur-v4';
 const ASSETS = ['/manifest.webmanifest', '/assets/tierra-fleur-estate-bg.jpg', '/assets/tierra-fleur-crest.jpeg'];
 
 self.addEventListener('install', event => event.waitUntil(
@@ -27,5 +27,13 @@ self.addEventListener('fetch', event => {
     })());
     return;
   }
-  event.respondWith(caches.match(event.request).then(cached => cached || fetch(event.request)));
+  event.respondWith(caches.match(event.request).then(async cached => {
+    if (cached) return cached;
+    const response = await fetch(event.request);
+    if (response.ok && new URL(event.request.url).origin === self.location.origin) {
+      const cache = await caches.open(CACHE);
+      await cache.put(event.request, response.clone());
+    }
+    return response;
+  }));
 });

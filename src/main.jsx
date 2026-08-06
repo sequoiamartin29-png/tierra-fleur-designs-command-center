@@ -34,8 +34,8 @@ import {
   PresentationMode,
 } from './presentationWorkspace.jsx';
 import { lessonForTopic } from './localLessons.js';
-import { LearningWorkspace } from './learningWorkspace.jsx';
 import { createFeaturePackStarter, migrateFeaturePackData } from './summaryModels.js';
+import { createAcademyStarter, migrateAcademyData } from './academyState.js';
 import { CalendarDashboardCards, CalendarDistrict } from './calendarDistrict.jsx';
 import { createCalendarStarter, migrateCalendarData } from './calendarEngine.js';
 import {
@@ -68,6 +68,8 @@ import {
   findPlantSupplierMatches,
   normalizePlantSearch,
 } from './plantSourcing.js';
+
+const AcademyWorkspace = React.lazy(() => import('./academyWorkspace.jsx'));
 
 const STORAGE_KEY = 'tierraFleurCommandCenterV1';
 
@@ -419,6 +421,7 @@ const starter = {
   ...createGrowthStarter(),
   notes: '',
   learning: { history: [], completed: [], preferences: { level: 'Growing', focus: 'Business + Design' }, myLessons: [] },
+  academy: createAcademyStarter(),
 };
 
 function normalizeData(saved = {}) {
@@ -471,6 +474,7 @@ function normalizeData(saved = {}) {
   const business = { ...starter.business, ...(saved.business && typeof saved.business === 'object' && !Array.isArray(saved.business) ? saved.business : {}) };
   const tasks = (Array.isArray(saved.tasks) ? saved.tasks : starter.tasks).filter(item => item && typeof item === 'object').map(item => ({ ...item, id: item.id || crypto.randomUUID(), title: item.title || 'Untitled task', done: Boolean(item.done), priority: ['High', 'Medium', 'Low'].includes(item.priority) ? item.priority : 'Medium' }));
   const learning = saved.learning && typeof saved.learning === 'object' && !Array.isArray(saved.learning) ? { ...starter.learning, ...saved.learning, history: Array.isArray(saved.learning.history) ? saved.learning.history : [], completed: Array.isArray(saved.learning.completed) ? saved.learning.completed : [], myLessons: Array.isArray(saved.learning.myLessons) ? saved.learning.myLessons : [] } : starter.learning;
+  const academy = migrateAcademyData(saved.academy, learning);
   return repairLeadFollowUpCalendarLinks({
     ...starter,
     ...saved,
@@ -487,6 +491,7 @@ function normalizeData(saved = {}) {
     business,
     tasks,
     learning,
+    academy,
     nurseries: migratedNurseries,
     plantSourcingVersion: PLANT_SOURCING_VERSION,
   });
@@ -729,7 +734,7 @@ function App() {
         {view === 'tasks' && <Tasks items={data.tasks} setItems={v => update('tasks', v)} />}
         {view === 'services' && <ServiceLibrary data={data} setData={setData} />}
         {view === 'plant-sourcing' && <PlantSourcingDirectory data={data} setData={setData} />}
-        {view === 'learning' && <LearningWorkspace learning={data.learning || starter.learning} setLearning={v => update('learning', v)} />}
+        {view === 'learning' && <React.Suspense fallback={<section className="panel glass"><p>Opening Tierra Fleur Academy…</p></section>}><AcademyWorkspace data={data} setData={setData} openDesign={openDesign} /></React.Suspense>}
         {view === 'settings' && <Settings data={data} setData={setData} />}
       </main>
     </div>

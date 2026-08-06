@@ -205,6 +205,24 @@ export async function prepareProjectPhoto(file, maxDimension = DISPLAY_MAX_DIMEN
   }
 }
 
+export async function prepareAcademyEvidence(file) {
+  const prepared = await prepareProjectPhoto(file, 1400);
+  try {
+    return {
+      evidenceId: `academy-evidence-${crypto.randomUUID()}`,
+      data: await blobToDataUrl(prepared.displayBlob),
+      name: prepared.name || prepared.originalName || 'academy-evidence.jpg',
+      type: prepared.type || 'image/jpeg',
+      width: prepared.width,
+      height: prepared.height,
+      originalName: prepared.originalName || '',
+      createdAt: new Date().toISOString(),
+    };
+  } finally {
+    releasePreparedProjectPhoto(prepared);
+  }
+}
+
 export function releasePreparedProjectPhoto(prepared) {
   if (String(prepared?.data || '').startsWith('blob:')) URL.revokeObjectURL(prepared.data);
   if (String(prepared?.originalData || '').startsWith('blob:')) URL.revokeObjectURL(prepared.originalData);
